@@ -36,6 +36,15 @@ interface AhpResult {
   criteriaScores: {[criteriaId: string]: number};
 }
 
+interface ProcessedResult {
+  student: Student;
+  studentScores: {[key: string]: number};
+  normalizedScores: {[key: string]: number};
+  ahpScore: number;
+  percentage: string;
+  rank: number; // Add this property to fix the error
+}
+
 const AHPCalculation = () => {
   const [calculationStep, setCalculationStep] = useState(0);
   const [results, setResults] = useState<AhpResult[] | null>(null);
@@ -215,7 +224,7 @@ const AHPCalculation = () => {
       });
       
       // Step 2: Hitung skor AHP
-      const ahpResults = students.map(student => {
+      const ahpResults: ProcessedResult[] = students.map(student => {
         const studentScores: {[key: string]: number} = {};
         const normalizedScores: {[key: string]: number} = {};
         let ahpScore = 0;
@@ -241,7 +250,8 @@ const AHPCalculation = () => {
           studentScores,
           normalizedScores,
           ahpScore,
-          percentage: (ahpScore * 100).toFixed(2)
+          percentage: (ahpScore * 100).toFixed(2),
+          rank: 0 // Initialize with 0, will be set later
         };
       });
       
@@ -285,7 +295,7 @@ const AHPCalculation = () => {
     }
   };
 
-  const saveResults = async (ahpResults: any[]) => {
+  const saveResults = async (ahpResults: ProcessedResult[]) => {
     try {
       // First delete existing results
       await supabase
