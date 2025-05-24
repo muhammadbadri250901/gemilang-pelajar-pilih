@@ -16,38 +16,54 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMessage(null);
 
     try {
+      if (!email || !password) {
+        setErrorMessage("Email dan password tidak boleh kosong");
+        return;
+      }
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
-        toast({
-          title: "Login Gagal",
-          description: error.message,
-          variant: "destructive",
-        });
+        console.error('Login error:', error);
+        if (error.message.includes('Invalid login credentials')) {
+          setErrorMessage("Email atau password salah");
+        } else {
+          setErrorMessage(error.message || "Terjadi kesalahan saat login");
+        }
         return;
       }
 
       if (data.user) {
         // Get user profile data
-        const { data: profileData } = await supabase
+        const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('username, role')
           .eq('id', data.user.id)
           .single();
+          
+        if (profileError && !profileError.message.includes('No rows found')) {
+          console.error('Profile error:', profileError);
+          setErrorMessage("Gagal memuat data profil");
+          return;
+        }
 
-        onLogin({ 
+        const userData = { 
           username: profileData?.username || data.user.email || 'Admin', 
           role: profileData?.role || 'user' 
-        });
+        };
+        
+        onLogin(userData);
 
         toast({
           title: "Login Berhasil",
@@ -56,6 +72,7 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
       }
     } catch (error) {
       console.error('Login error:', error);
+      setErrorMessage("Terjadi kesalahan tidak terduga");
       toast({
         title: "Login Error",
         description: "Terjadi kesalahan saat login",
@@ -83,6 +100,12 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
             <CardTitle className="text-xl font-semibold text-gray-800">Login Administrator</CardTitle>
           </CardHeader>
           <CardContent>
+            {errorMessage && (
+              <div className="bg-red-50 text-red-700 p-3 rounded-md mb-4 text-sm">
+                {errorMessage}
+              </div>
+            )}
+            
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-gray-700">Email</Label>

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +17,7 @@ import StudentManagement from './StudentManagement';
 import CriteriaManagement from './CriteriaManagement';
 import AHPCalculation from './AHPCalculation';
 import RankingResults from './RankingResults';
+import { toast } from '@/hooks/use-toast';
 
 interface DashboardProps {
   user: { username: string; role: string } | null;
@@ -32,6 +32,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     calculations: 0,
     topStudents: 0
   });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchStats();
@@ -39,26 +40,35 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
   const fetchStats = async () => {
     try {
+      setLoading(true);
       // Get student count
-      const { count: studentCount } = await supabase
+      const { count: studentCount, error: studentError } = await supabase
         .from('students')
         .select('*', { count: 'exact', head: true });
 
+      if (studentError) throw studentError;
+
       // Get criteria count
-      const { count: criteriaCount } = await supabase
+      const { count: criteriaCount, error: criteriaError } = await supabase
         .from('criteria')
         .select('*', { count: 'exact', head: true });
 
+      if (criteriaError) throw criteriaError;
+
       // Get AHP calculations count
-      const { count: calculationsCount } = await supabase
+      const { count: calculationsCount, error: calcError } = await supabase
         .from('ahp_results')
         .select('*', { count: 'exact', head: true });
 
+      if (calcError) throw calcError;
+
       // Get top students count (with rank <= 10)
-      const { count: topStudentsCount } = await supabase
+      const { count: topStudentsCount, error: topError } = await supabase
         .from('ahp_results')
         .select('*', { count: 'exact', head: true })
         .lte('rank', 10);
+
+      if (topError) throw topError;
 
       setStats({
         students: studentCount || 0,
@@ -68,6 +78,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       });
     } catch (error) {
       console.error('Error fetching stats:', error);
+      toast({
+        title: "Error",
+        description: "Gagal memuat statistik dashboard",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -139,51 +156,59 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {statsData.map((stat, index) => (
-                <Card key={index} className="hover:shadow-lg transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-center">
-                      <div className={`${stat.color} p-3 rounded-lg`}>
-                        <stat.icon className="h-6 w-6 text-white" />
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {statsData.map((stat, index) => (
+                    <Card key={index} className="hover:shadow-lg transition-shadow">
+                      <CardContent className="p-6">
+                        <div className="flex items-center">
+                          <div className={`${stat.color} p-3 rounded-lg`}>
+                            <stat.icon className="h-6 w-6 text-white" />
+                          </div>
+                          <div className="ml-4">
+                            <p className="text-sm font-medium text-gray-600">{stat.title}</p>
+                            <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Selamat Datang di SPK Siswa Berprestasi</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-gray-600 mb-4">
+                      Sistem Pendukung Keputusan ini menggunakan metode Analytical Hierarchy Process (AHP) 
+                      untuk membantu dalam pemilihan siswa berprestasi di SMPN 008 Guntung.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-blue-50 rounded-lg">
+                        <h3 className="font-semibold text-blue-900 mb-2">Metode AHP</h3>
+                        <p className="text-sm text-blue-700">
+                          Analytical Hierarchy Process membantu pengambilan keputusan dengan 
+                          membandingkan kriteria secara berpasangan untuk menghasilkan bobot yang objektif.
+                        </p>
                       </div>
-                      <div className="ml-4">
-                        <p className="text-sm font-medium text-gray-600">{stat.title}</p>
-                        <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
+                      <div className="p-4 bg-green-50 rounded-lg">
+                        <h3 className="font-semibold text-green-900 mb-2">Proses Penilaian</h3>
+                        <p className="text-sm text-green-700">
+                          Sistem akan menghitung eigen vector, consistency ratio, dan menghasilkan 
+                          ranking siswa berdasarkan kriteria yang telah ditentukan.
+                        </p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              ))}
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Selamat Datang di SPK Siswa Berprestasi</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-600 mb-4">
-                  Sistem Pendukung Keputusan ini menggunakan metode Analytical Hierarchy Process (AHP) 
-                  untuk membantu dalam pemilihan siswa berprestasi di SMPN 008 Guntung.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-blue-50 rounded-lg">
-                    <h3 className="font-semibold text-blue-900 mb-2">Metode AHP</h3>
-                    <p className="text-sm text-blue-700">
-                      Analytical Hierarchy Process membantu pengambilan keputusan dengan 
-                      membandingkan kriteria secara berpasangan untuk menghasilkan bobot yang objektif.
-                    </p>
-                  </div>
-                  <div className="p-4 bg-green-50 rounded-lg">
-                    <h3 className="font-semibold text-green-900 mb-2">Proses Penilaian</h3>
-                    <p className="text-sm text-green-700">
-                      Sistem akan menghitung eigen vector, consistency ratio, dan menghasilkan 
-                      ranking siswa berdasarkan kriteria yang telah ditentukan.
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="students">

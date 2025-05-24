@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -42,7 +41,7 @@ interface ProcessedResult {
   normalizedScores: {[key: string]: number};
   ahpScore: number;
   percentage: string;
-  rank: number; // Add this property to fix the error
+  rank: number;
 }
 
 const AHPCalculation = () => {
@@ -52,6 +51,7 @@ const AHPCalculation = () => {
   const [criteria, setCriteria] = useState<Criteria[]>([]);
   const [scores, setScores] = useState<Score[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Check if there are already results in the database
@@ -85,6 +85,11 @@ const AHPCalculation = () => {
         for (const result of data) {
           const student = result.students as Student;
           
+          if (!student) {
+            console.error('Student data is missing for result:', result);
+            continue;
+          }
+          
           // Get scores for this student
           const { data: studentScores } = await supabase
             .from('student_scores')
@@ -113,11 +118,14 @@ const AHPCalculation = () => {
       }
     } catch (error) {
       console.error('Error checking existing results:', error);
+      setError('Gagal memuat hasil perhitungan yang ada');
     }
   };
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
+    
     try {
       // Load criteria with weights
       const { data: criteriaData, error: criteriaError } = await supabase
@@ -127,7 +135,7 @@ const AHPCalculation = () => {
       if (criteriaError) throw criteriaError;
 
       // Check if criteria weights are set
-      const missingWeights = criteriaData.some(c => c.weight === null || c.weight === undefined);
+      const missingWeights = criteriaData?.some(c => c.weight === null || c.weight === undefined);
       if (missingWeights) {
         toast({
           title: "Peringatan",
@@ -169,7 +177,7 @@ const AHPCalculation = () => {
       let missingScores = false;
       for (const student of studentsData) {
         for (const criterion of criteriaData) {
-          const hasScore = scoresData.some(
+          const hasScore = scoresData?.some(
             score => score.student_id === student.id && score.criteria_id === criterion.id
           );
           
@@ -192,8 +200,9 @@ const AHPCalculation = () => {
       }
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading data:', error);
+      setError(error.message || 'Gagal memuat data');
       toast({
         title: "Error",
         description: "Gagal memuat data",
@@ -210,9 +219,10 @@ const AHPCalculation = () => {
     if (!dataReady) return;
     
     setCalculationStep(1);
-    await new Promise(resolve => setTimeout(resolve, 500));
-
+    
     try {
+      await new Promise(resolve => setTimeout(resolve, 500)); // For visual feedback
+
       // Step 1: Normalisasi nilai
       setCalculationStep(2);
       
@@ -263,7 +273,7 @@ const AHPCalculation = () => {
         result.rank = index + 1;
       });
       
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 500)); // For visual feedback
       setCalculationStep(3);
       
       // Save results to database
@@ -285,13 +295,17 @@ const AHPCalculation = () => {
         title: "Perhitungan Selesai",
         description: "Hasil perhitungan AHP telah berhasil digenerate",
       });
-    } catch (error) {
+      
+      return true;
+    } catch (error: any) {
       console.error('Error calculating AHP:', error);
+      setError(error.message || 'Gagal menghitung AHP');
       toast({
         title: "Error",
         description: "Gagal menghitung AHP",
         variant: "destructive",
       });
+      return false;
     }
   };
 
@@ -310,26 +324,31 @@ const AHPCalculation = () => {
         rank: result.rank
       }));
       
-      await supabase
+      const { error } = await supabase
         .from('ahp_results')
         .insert(resultsToInsert);
-    } catch (error) {
+        
+      if (error) throw error;
+    } catch (error: any) {
       console.error('Error saving results:', error);
       toast({
         title: "Peringatan",
         description: "Hasil perhitungan berhasil tetapi gagal disimpan ke database",
         variant: "destructive",
       });
+      throw error;
     }
   };
 
   const resetCalculation = async () => {
     try {
       // Delete existing results
-      await supabase
+      const { error } = await supabase
         .from('ahp_results')
         .delete()
         .gt('id', '0');
+      
+      if (error) throw error;
       
       setCalculationStep(0);
       setResults(null);
@@ -367,6 +386,12 @@ const AHPCalculation = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div className="bg-red-50 text-red-700 p-4 rounded-md mb-4">
+              {error}
+            </div>
+          )}
+
           {calculationStep === 0 && (
             <div className="text-center py-8">
               <p className="text-gray-600 mb-6">
