@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,6 +13,7 @@ import {
   Settings,
   FileText
 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 import StudentManagement from './StudentManagement';
 import CriteriaManagement from './CriteriaManagement';
 import AHPCalculation from './AHPCalculation';
@@ -25,12 +26,56 @@ interface DashboardProps {
 
 const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [stats, setStats] = useState({
+    students: 0,
+    criteria: 0,
+    calculations: 0,
+    topStudents: 0
+  });
 
-  const stats = [
-    { title: 'Total Siswa', value: '45', icon: Users, color: 'bg-blue-500' },
-    { title: 'Kriteria', value: '5', icon: FileText, color: 'bg-green-500' },
-    { title: 'Perhitungan AHP', value: '3', icon: Calculator, color: 'bg-purple-500' },
-    { title: 'Siswa Terpilih', value: '10', icon: Trophy, color: 'bg-yellow-500' },
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      // Get student count
+      const { count: studentCount } = await supabase
+        .from('students')
+        .select('*', { count: 'exact', head: true });
+
+      // Get criteria count
+      const { count: criteriaCount } = await supabase
+        .from('criteria')
+        .select('*', { count: 'exact', head: true });
+
+      // Get AHP calculations count
+      const { count: calculationsCount } = await supabase
+        .from('ahp_results')
+        .select('*', { count: 'exact', head: true });
+
+      // Get top students count (with rank <= 10)
+      const { count: topStudentsCount } = await supabase
+        .from('ahp_results')
+        .select('*', { count: 'exact', head: true })
+        .lte('rank', 10);
+
+      setStats({
+        students: studentCount || 0,
+        criteria: criteriaCount || 0,
+        calculations: calculationsCount || 0,
+        topStudents: topStudentsCount || 0
+      });
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    }
+  };
+
+  const statsData = [
+    { title: 'Total Siswa', value: stats.students.toString(), icon: Users, color: 'bg-blue-500' },
+    { title: 'Kriteria', value: stats.criteria.toString(), icon: FileText, color: 'bg-green-500' },
+    { title: 'Perhitungan AHP', value: stats.calculations.toString(), icon: Calculator, color: 'bg-purple-500' },
+    { title: 'Siswa Terpilih', value: stats.topStudents.toString(), icon: Trophy, color: 'bg-yellow-500' },
   ];
 
   return (
@@ -64,7 +109,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={(value) => {
+          setActiveTab(value);
+          if (value === 'overview') {
+            fetchStats();
+          }
+        }} className="w-full">
           <TabsList className="grid w-full grid-cols-5 mb-8">
             <TabsTrigger value="overview" className="flex items-center">
               <BarChart3 className="h-4 w-4 mr-2" />
@@ -90,7 +140,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
           <TabsContent value="overview" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {stats.map((stat, index) => (
+              {statsData.map((stat, index) => (
                 <Card key={index} className="hover:shadow-lg transition-shadow">
                   <CardContent className="p-6">
                     <div className="flex items-center">

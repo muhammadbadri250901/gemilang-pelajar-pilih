@@ -9,7 +9,185 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      ahp_results: {
+        Row: {
+          calculation_date: string | null
+          final_score: number
+          id: string
+          rank: number | null
+          student_id: string | null
+        }
+        Insert: {
+          calculation_date?: string | null
+          final_score: number
+          id?: string
+          rank?: number | null
+          student_id?: string | null
+        }
+        Update: {
+          calculation_date?: string | null
+          final_score?: number
+          id?: string
+          rank?: number | null
+          student_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ahp_results_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      criteria: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          name: string
+          weight: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          weight?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          weight?: number | null
+        }
+        Relationships: []
+      }
+      criteria_comparison: {
+        Row: {
+          created_at: string | null
+          criteria1_id: string | null
+          criteria2_id: string | null
+          id: string
+          value: number
+        }
+        Insert: {
+          created_at?: string | null
+          criteria1_id?: string | null
+          criteria2_id?: string | null
+          id?: string
+          value?: number
+        }
+        Update: {
+          created_at?: string | null
+          criteria1_id?: string | null
+          criteria2_id?: string | null
+          id?: string
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "criteria_comparison_criteria1_id_fkey"
+            columns: ["criteria1_id"]
+            isOneToOne: false
+            referencedRelation: "criteria"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "criteria_comparison_criteria2_id_fkey"
+            columns: ["criteria2_id"]
+            isOneToOne: false
+            referencedRelation: "criteria"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string | null
+          id: string
+          role: string | null
+          username: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          role?: string | null
+          username?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          role?: string | null
+          username?: string | null
+        }
+        Relationships: []
+      }
+      student_scores: {
+        Row: {
+          created_at: string | null
+          criteria_id: string | null
+          id: string
+          score: number
+          student_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          criteria_id?: string | null
+          id?: string
+          score: number
+          student_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          criteria_id?: string | null
+          id?: string
+          score?: number
+          student_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_scores_criteria_id_fkey"
+            columns: ["criteria_id"]
+            isOneToOne: false
+            referencedRelation: "criteria"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_scores_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      students: {
+        Row: {
+          class: string
+          created_at: string | null
+          id: string
+          name: string
+          nis: string
+        }
+        Insert: {
+          class: string
+          created_at?: string | null
+          id?: string
+          name: string
+          nis: string
+        }
+        Update: {
+          class?: string
+          created_at?: string | null
+          id?: string
+          name?: string
+          nis?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

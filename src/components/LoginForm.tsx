@@ -6,37 +6,64 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { GraduationCap, Lock, User } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 interface LoginFormProps {
   onLogin: (userData: { username: string; role: string }) => void;
 }
 
 const LoginForm = ({ onLogin }: LoginFormProps) => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    // Simulasi login sederhana
-    setTimeout(() => {
-      if (username === 'admin' && password === 'admin123') {
-        onLogin({ username: 'Admin SMPN 008', role: 'admin' });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        toast({
+          title: "Login Gagal",
+          description: error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (data.user) {
+        // Get user profile data
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('username, role')
+          .eq('id', data.user.id)
+          .single();
+
+        onLogin({ 
+          username: profileData?.username || data.user.email || 'Admin', 
+          role: profileData?.role || 'user' 
+        });
+
         toast({
           title: "Login Berhasil",
           description: "Selamat datang di SPK Siswa Berprestasi",
         });
-      } else {
-        toast({
-          title: "Login Gagal",
-          description: "Username atau password salah",
-          variant: "destructive",
-        });
       }
+    } catch (error) {
+      console.error('Login error:', error);
+      toast({
+        title: "Login Error",
+        description: "Terjadi kesalahan saat login",
+        variant: "destructive",
+      });
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -58,15 +85,15 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username" className="text-gray-700">Username</Label>
+                <Label htmlFor="email" className="text-gray-700">Email</Label>
                 <div className="relative">
                   <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
-                    id="username"
-                    type="text"
-                    placeholder="Masukkan username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    id="email"
+                    type="email"
+                    placeholder="Masukkan email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
                     required
                   />
@@ -98,7 +125,7 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
             
             <div className="mt-6 p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-600 text-center mb-2">Demo Login:</p>
-              <p className="text-xs text-gray-700 text-center">Username: <span className="font-mono">admin</span></p>
+              <p className="text-xs text-gray-700 text-center">Email: <span className="font-mono">admin@example.com</span></p>
               <p className="text-xs text-gray-700 text-center">Password: <span className="font-mono">admin123</span></p>
             </div>
           </CardContent>

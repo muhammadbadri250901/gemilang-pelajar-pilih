@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,55 +8,30 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 interface Student {
-  id: number;
+  id: string;
   name: string;
   nis: string;
   class: string;
-  academicScore: number;
-  behaviorScore: number;
-  achievementScore: number;
-  leadershipScore: number;
-  attendanceScore: number;
+  academicScore?: number;
+  behaviorScore?: number;
+  achievementScore?: number;
+  leadershipScore?: number;
+  attendanceScore?: number;
+}
+
+interface Score {
+  criteria_id: string;
+  score: number;
 }
 
 const StudentManagement = () => {
-  const [students, setStudents] = useState<Student[]>([
-    {
-      id: 1,
-      name: 'Ahmad Rizki',
-      nis: '001234567',
-      class: '9A',
-      academicScore: 85,
-      behaviorScore: 90,
-      achievementScore: 75,
-      leadershipScore: 80,
-      attendanceScore: 95
-    },
-    {
-      id: 2,
-      name: 'Siti Nurhaliza',
-      nis: '001234568',
-      class: '9B',
-      academicScore: 92,
-      behaviorScore: 88,
-      achievementScore: 85,
-      leadershipScore: 90,
-      attendanceScore: 96
-    },
-    {
-      id: 3,
-      name: 'Budi Santoso',
-      nis: '001234569',
-      class: '9A',
-      academicScore: 88,
-      behaviorScore: 85,
-      achievementScore: 70,
-      leadershipScore: 85,
-      attendanceScore: 92
-    }
-  ]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [criteria, setCriteria] = useState<{id: string, name: string}[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [studentScores, setStudentScores] = useState<{[key: string]: {[criteriaId: string]: number}}>({});
 
   const [formData, setFormData] = useState({
     name: '',
@@ -69,45 +44,153 @@ const StudentManagement = () => {
     attendanceScore: ''
   });
 
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchStudents();
+    fetchCriteria();
+  }, []);
+
+  const fetchStudents = async () => {
+    try {
+      const { data: studentsData, error: studentsError } = await supabase
+        .from('students')
+        .select('*');
+
+      if (studentsError) {
+        throw studentsError;
+      }
+
+      // Get all scores
+      const { data: scoresData, error: scoresError } = await supabase
+        .from('student_scores')
+        .select('student_id, criteria_id, score');
+
+      if (scoresError) {
+        throw scoresError;
+      }
+
+      // Organize scores by student_id and criteria_id
+      const scoresByStudent: {[key: string]: {[criteriaId: string]: number}} = {};
+      scoresData?.forEach(score => {
+        if (!scoresByStudent[score.student_id]) {
+          scoresByStudent[score.student_id] = {};
+        }
+        scoresByStudent[score.student_id][score.criteria_id] = score.score;
+      });
+
+      setStudentScores(scoresByStudent);
+      setStudents(studentsData || []);
+    } catch (error) {
+      console.error('Error fetching students:', error);
+      toast({
+        title: "Error",
+        description: "Gagal memuat data siswa",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCriteria = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('criteria')
+        .select('id, name')
+        .order('name');
+
+      if (error) {
+        throw error;
+      }
+
+      setCriteria(data || []);
+    } catch (error) {
+      console.error('Error fetching criteria:', error);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const studentData = {
-      name: formData.name,
-      nis: formData.nis,
-      class: formData.class,
-      academicScore: Number(formData.academicScore),
-      behaviorScore: Number(formData.behaviorScore),
-      achievementScore: Number(formData.achievementScore),
-      leadershipScore: Number(formData.leadershipScore),
-      attendanceScore: Number(formData.attendanceScore)
-    };
-
-    if (editingId) {
-      setStudents(students.map(s => 
-        s.id === editingId ? { ...studentData, id: editingId } : s
-      ));
-      toast({
-        title: "Data Diperbarui",
-        description: "Data siswa berhasil diperbarui",
-      });
-    } else {
-      const newStudent = {
-        ...studentData,
-        id: Math.max(...students.map(s => s.id), 0) + 1
+    try {
+      const studentData = {
+        name: formData.name,
+        nis: formData.nis,
+        class: formData.class
       };
-      setStudents([...students, newStudent]);
+
+      let studentId = editingId;
+      
+      if (editingId) {
+        // Update existing student
+        const { error } = await supabase
+          .from('students')
+          .update(studentData)
+          .eq('id', editingId);
+
+        if (error) throw error;
+      } else {
+        // Insert new student
+        const { data, error } = await supabase
+          .from('students')
+          .insert(studentData)
+          .select();
+
+        if (error) throw error;
+        studentId = data[0].id;
+      }
+
+      // Map criteria names to their IDs
+      const criteriaMap: {[key: string]: string} = {
+        'Akademik': criteria.find(c => c.name === 'Akademik')?.id || '',
+        'Perilaku': criteria.find(c => c.name === 'Perilaku')?.id || '',
+        'Prestasi': criteria.find(c => c.name === 'Prestasi')?.id || '',
+        'Kepemimpinan': criteria.find(c => c.name === 'Kepemimpinan')?.id || '',
+        'Kehadiran': criteria.find(c => c.name === 'Kehadiran')?.id || ''
+      };
+
+      // Update or insert scores
+      if (studentId) {
+        const scores = [
+          { student_id: studentId, criteria_id: criteriaMap['Akademik'], score: Number(formData.academicScore) },
+          { student_id: studentId, criteria_id: criteriaMap['Perilaku'], score: Number(formData.behaviorScore) },
+          { student_id: studentId, criteria_id: criteriaMap['Prestasi'], score: Number(formData.achievementScore) },
+          { student_id: studentId, criteria_id: criteriaMap['Kepemimpinan'], score: Number(formData.leadershipScore) },
+          { student_id: studentId, criteria_id: criteriaMap['Kehadiran'], score: Number(formData.attendanceScore) }
+        ];
+
+        // First delete existing scores
+        await supabase
+          .from('student_scores')
+          .delete()
+          .eq('student_id', studentId);
+
+        // Then insert new scores
+        const { error: scoreError } = await supabase
+          .from('student_scores')
+          .insert(scores.filter(s => s.criteria_id && !isNaN(s.score)));
+
+        if (scoreError) throw scoreError;
+      }
+
       toast({
-        title: "Data Ditambahkan",
-        description: "Data siswa baru berhasil ditambahkan",
+        title: editingId ? "Data Diperbarui" : "Data Ditambahkan",
+        description: editingId ? "Data siswa berhasil diperbarui" : "Data siswa baru berhasil ditambahkan",
+      });
+
+      fetchStudents();
+      resetForm();
+      setIsDialogOpen(false);
+    } catch (error: any) {
+      console.error('Error saving student:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Gagal menyimpan data siswa",
+        variant: "destructive",
       });
     }
-
-    resetForm();
-    setIsDialogOpen(false);
   };
 
   const resetForm = () => {
@@ -124,28 +207,73 @@ const StudentManagement = () => {
     setEditingId(null);
   };
 
-  const handleEdit = (student: Student) => {
+  const handleEdit = async (student: Student) => {
+    setEditingId(student.id);
+    
+    // Get scores for this student
+    const scores = studentScores[student.id] || {};
+    
+    // Find criteria IDs
+    const academicId = criteria.find(c => c.name === 'Akademik')?.id;
+    const behaviorId = criteria.find(c => c.name === 'Perilaku')?.id;
+    const achievementId = criteria.find(c => c.name === 'Prestasi')?.id;
+    const leadershipId = criteria.find(c => c.name === 'Kepemimpinan')?.id;
+    const attendanceId = criteria.find(c => c.name === 'Kehadiran')?.id;
+
     setFormData({
       name: student.name,
       nis: student.nis,
       class: student.class,
-      academicScore: student.academicScore.toString(),
-      behaviorScore: student.behaviorScore.toString(),
-      achievementScore: student.achievementScore.toString(),
-      leadershipScore: student.leadershipScore.toString(),
-      attendanceScore: student.attendanceScore.toString()
+      academicScore: academicId && scores[academicId] ? scores[academicId].toString() : '',
+      behaviorScore: behaviorId && scores[behaviorId] ? scores[behaviorId].toString() : '',
+      achievementScore: achievementId && scores[achievementId] ? scores[achievementId].toString() : '',
+      leadershipScore: leadershipId && scores[leadershipId] ? scores[leadershipId].toString() : '',
+      attendanceScore: attendanceId && scores[attendanceId] ? scores[attendanceId].toString() : ''
     });
-    setEditingId(student.id);
+    
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (id: number) => {
-    setStudents(students.filter(s => s.id !== id));
-    toast({
-      title: "Data Dihapus",
-      description: "Data siswa berhasil dihapus",
-    });
+  const handleDelete = async (id: string) => {
+    try {
+      // Delete student (cascade will delete related scores)
+      const { error } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setStudents(students.filter(s => s.id !== id));
+      toast({
+        title: "Data Dihapus",
+        description: "Data siswa berhasil dihapus",
+      });
+    } catch (error: any) {
+      console.error('Error deleting student:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Gagal menghapus data siswa",
+        variant: "destructive",
+      });
+    }
   };
+
+  const getStudentScore = (studentId: string, criteriaName: string) => {
+    const criteriaId = criteria.find(c => c.name === criteriaName)?.id;
+    if (criteriaId && studentScores[studentId] && studentScores[studentId][criteriaId]) {
+      return studentScores[studentId][criteriaId];
+    }
+    return '-';
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -279,36 +407,44 @@ const StudentManagement = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {students.map((student) => (
-                  <TableRow key={student.id}>
-                    <TableCell className="font-medium">{student.name}</TableCell>
-                    <TableCell>{student.nis}</TableCell>
-                    <TableCell>{student.class}</TableCell>
-                    <TableCell>{student.academicScore}</TableCell>
-                    <TableCell>{student.behaviorScore}</TableCell>
-                    <TableCell>{student.achievementScore}</TableCell>
-                    <TableCell>{student.leadershipScore}</TableCell>
-                    <TableCell>{student.attendanceScore}</TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEdit(student)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDelete(student.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                {students.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-6 text-gray-500">
+                      Belum ada data siswa. Klik "Tambah Siswa" untuk menambahkan data.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  students.map((student) => (
+                    <TableRow key={student.id}>
+                      <TableCell className="font-medium">{student.name}</TableCell>
+                      <TableCell>{student.nis}</TableCell>
+                      <TableCell>{student.class}</TableCell>
+                      <TableCell>{getStudentScore(student.id, 'Akademik')}</TableCell>
+                      <TableCell>{getStudentScore(student.id, 'Perilaku')}</TableCell>
+                      <TableCell>{getStudentScore(student.id, 'Prestasi')}</TableCell>
+                      <TableCell>{getStudentScore(student.id, 'Kepemimpinan')}</TableCell>
+                      <TableCell>{getStudentScore(student.id, 'Kehadiran')}</TableCell>
+                      <TableCell>
+                        <div className="flex space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleEdit(student)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDelete(student.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>

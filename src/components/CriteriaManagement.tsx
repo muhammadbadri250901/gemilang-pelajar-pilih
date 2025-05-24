@@ -1,29 +1,24 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 interface Criteria {
-  id: number;
+  id: string;
   name: string;
   description: string;
+  weight?: number;
 }
 
 const CriteriaManagement = () => {
-  const criteria: Criteria[] = [
-    { id: 1, name: 'Akademik', description: 'Nilai rata-rata mata pelajaran' },
-    { id: 2, name: 'Perilaku', description: 'Penilaian sikap dan karakter' },
-    { id: 3, name: 'Prestasi', description: 'Prestasi akademik dan non-akademik' },
-    { id: 4, name: 'Kepemimpinan', description: 'Kemampuan memimpin dan berorganisasi' },
-    { id: 5, name: 'Kehadiran', description: 'Tingkat kehadiran di sekolah' }
-  ];
-
-  const [pairwiseMatrix, setPairwiseMatrix] = useState<number[][]>(
-    Array(criteria.length).fill(null).map(() => Array(criteria.length).fill(1))
-  );
+  const [criteria, setCriteria] = useState<Criteria[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pairwiseMatrix, setPairwiseMatrix] = useState<number[][]>([]);
+  const [savingMatrix, setSavingMatrix] = useState(false);
 
   const ahpScale = [
     { value: 9, label: '9 - Mutlak lebih penting' },
@@ -45,55 +40,198 @@ const CriteriaManagement = () => {
     { value: 0.11, label: '1/9 - Mutlak kurang penting' }
   ];
 
-  const updateMatrix = (i: number, j: number, value: number) => {
-    const newMatrix = [...pairwiseMatrix];
-    newMatrix[i][j] = value;
-    newMatrix[j][i] = 1 / value; // Reciprocal value
-    setPairwiseMatrix(newMatrix);
+  useEffect(() => {
+    fetchCriteria();
+  }, []);
+
+  useEffect(() => {
+    if (criteria.length > 0) {
+      initializeMatrix();
+      fetchPairwiseValues();
+    }
+  }, [criteria]);
+
+  const fetchCriteria = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('criteria')
+        .select('*')
+        .order('name');
+
+      if (error) throw error;
+
+      setCriteria(data || []);
+    } catch (error) {
+      console.error('Error fetching criteria:', error);
+      toast({
+        title: "Error",
+        description: "Gagal memuat data kriteria",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const calculateWeights = () => {
-    // Normalisasi matriks
-    const normalizedMatrix = pairwiseMatrix.map((row, i) => {
-      const columnSum = pairwiseMatrix.reduce((sum, r) => sum + r[i], 0);
-      return row.map(value => value / columnSum);
-    });
+  const fetchPairwiseValues = async () => {
+    if (criteria.length === 0) return;
 
-    // Hitung eigen vector (rata-rata baris)
-    const weights = normalizedMatrix.map(row => 
-      row.reduce((sum, value) => sum + value, 0) / row.length
-    );
+    try {
+      const { data, error } = await supabase
+        .from('criteria_comparison')
+        .select('criteria1_id, criteria2_id, value');
 
-    // Hitung Consistency Index (CI)
-    const lambda = pairwiseMatrix.reduce((sum, row, i) => {
-      const weightedSum = row.reduce((s, value, j) => s + value * weights[j], 0);
-      return sum + weightedSum * weights[i];
-    }, 0);
+      if (error) throw error;
 
-    const ci = (lambda - criteria.length) / (criteria.length - 1);
-    const ri = [0, 0, 0.52, 0.89, 1.11, 1.25, 1.35, 1.40, 1.45][criteria.length - 1];
-    const cr = ci / ri;
+      if (data && data.length > 0) {
+        const newMatrix = [...pairwiseMatrix];
+        
+        data.forEach(comparison => {
+          const i = criteria.findIndex(c => c.id === comparison.criteria1_id);
+          const j = criteria.findIndex(c => c.id === comparison.criteria2_id);
+          
+          if (i !== -1 && j !== -1) {
+            newMatrix[i][j] = comparison.value;
+            newMatrix[j][i] = 1 / comparison.value;
+          }
+        });
+        
+        setPairwiseMatrix(newMatrix);
+      }
+    } catch (error) {
+      console.error('Error fetching comparison values:', error);
+    }
+  };
 
-    console.log('Weights:', weights);
-    console.log('Lambda Max:', lambda);
-    console.log('CI:', ci);
-    console.log('CR:', cr);
+  const initializeMatrix = () => {
+    const size = criteria.length;
+    const matrix = Array(size).fill(null).map(() => Array(size).fill(1));
+    setPairwiseMatrix(matrix);
+  };
 
-    if (cr <= 0.1) {
+  const updateMatrix = async (i: number, j: number, value: number) => {
+    try {
+      const newMatrix = [...pairwiseMatrix];
+      newMatrix[i][j] = value;
+      newMatrix[j][i] = 1 / value;
+      setPairwiseMatrix(newMatrix);
+
+      // Save to database
+      const criteria1Id = criteria[i].id;
+      const criteria2Id = criteria[j].id;
+
+      // Check if comparison exists
+      const { data: existingData } = await supabase
+        .from('criteria_comparison')
+        .select('id')
+        .eq('criteria1_id', criteria1Id)
+        .eq('criteria2_id', criteria2Id);
+
+      if (existingData && existingData.length > 0) {
+        // Update existing comparison
+        await supabase
+          .from('criteria_comparison')
+          .update({ value })
+          .eq('criteria1_id', criteria1Id)
+          .eq('criteria2_id', criteria2Id);
+      } else {
+        // Insert new comparison
+        await supabase
+          .from('criteria_comparison')
+          .insert({
+            criteria1_id: criteria1Id,
+            criteria2_id: criteria2Id,
+            value
+          });
+      }
+    } catch (error) {
+      console.error('Error updating matrix:', error);
       toast({
-        title: "Perhitungan Berhasil",
-        description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten)`,
-      });
-    } else {
-      toast({
-        title: "Peringatan",
-        description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten)`,
+        title: "Error",
+        description: "Gagal menyimpan perbandingan",
         variant: "destructive",
       });
     }
-
-    return { weights, cr };
   };
+
+  const calculateWeights = async () => {
+    try {
+      setSavingMatrix(true);
+      // Normalisasi matriks
+      const normalizedMatrix = pairwiseMatrix.map((row, i) => {
+        const columnSum = pairwiseMatrix.reduce((sum, r) => sum + r[i], 0);
+        return row.map(value => value / columnSum);
+      });
+
+      // Hitung eigen vector (rata-rata baris)
+      const weights = normalizedMatrix.map(row => 
+        row.reduce((sum, value) => sum + value, 0) / row.length
+      );
+
+      // Hitung Consistency Index (CI)
+      const lambda = pairwiseMatrix.reduce((sum, row, i) => {
+        const weightedSum = row.reduce((s, value, j) => s + value * weights[j], 0);
+        return sum + weightedSum * weights[i];
+      }, 0);
+
+      const ci = (lambda - criteria.length) / (criteria.length - 1);
+      const ri = [0, 0, 0.52, 0.89, 1.11, 1.25, 1.35, 1.40, 1.45][criteria.length - 1];
+      const cr = ci / ri;
+
+      console.log('Weights:', weights);
+      console.log('Lambda Max:', lambda);
+      console.log('CI:', ci);
+      console.log('CR:', cr);
+
+      // Save weights to database
+      const updatedCriteria = criteria.map((criterion, index) => ({
+        ...criterion,
+        weight: weights[index]
+      }));
+
+      // Update weights in database
+      for (const criterion of updatedCriteria) {
+        await supabase
+          .from('criteria')
+          .update({ weight: criterion.weight })
+          .eq('id', criterion.id);
+      }
+
+      setCriteria(updatedCriteria);
+
+      if (cr <= 0.1) {
+        toast({
+          title: "Perhitungan Berhasil",
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten)`,
+        });
+      } else {
+        toast({
+          title: "Peringatan",
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten)`,
+          variant: "destructive",
+        });
+      }
+
+      return { weights, cr };
+    } catch (error) {
+      console.error('Error calculating weights:', error);
+      toast({
+        title: "Error",
+        description: "Gagal menghitung bobot kriteria",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingMatrix(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -107,6 +245,11 @@ const CriteriaManagement = () => {
               <div key={criterion.id} className="p-4 border rounded-lg bg-gray-50">
                 <h3 className="font-semibold text-gray-900">{criterion.name}</h3>
                 <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
+                {criterion.weight !== undefined && (
+                  <p className="text-sm font-semibold text-blue-700 mt-2">
+                    Bobot: {(criterion.weight * 100).toFixed(2)}%
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -145,7 +288,7 @@ const CriteriaManagement = () => {
                           <div className="text-center py-2">1</div>
                         ) : i < j ? (
                           <Select
-                            value={pairwiseMatrix[i][j].toString()}
+                            value={pairwiseMatrix[i] && pairwiseMatrix[i][j] ? pairwiseMatrix[i][j].toString() : "1"}
                             onValueChange={(value) => updateMatrix(i, j, parseFloat(value))}
                           >
                             <SelectTrigger className="w-full">
@@ -161,7 +304,7 @@ const CriteriaManagement = () => {
                           </Select>
                         ) : (
                           <div className="text-center py-2 text-gray-600">
-                            {pairwiseMatrix[i][j].toFixed(2)}
+                            {pairwiseMatrix[i] && pairwiseMatrix[i][j] ? pairwiseMatrix[i][j].toFixed(2) : ""}
                           </div>
                         )}
                       </td>
@@ -173,8 +316,12 @@ const CriteriaManagement = () => {
           </div>
           
           <div className="mt-6 flex justify-center">
-            <Button onClick={calculateWeights} className="px-8">
-              Hitung Bobot Kriteria
+            <Button 
+              onClick={calculateWeights} 
+              className="px-8" 
+              disabled={savingMatrix}
+            >
+              {savingMatrix ? 'Memproses...' : 'Hitung Bobot Kriteria'}
             </Button>
           </div>
 
