@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface Criteria {
   id: string;
@@ -19,6 +21,8 @@ const CriteriaManagement = () => {
   const [loading, setLoading] = useState(true);
   const [pairwiseMatrix, setPairwiseMatrix] = useState<number[][]>([]);
   const [savingMatrix, setSavingMatrix] = useState(false);
+  const [consistencyRatio, setConsistencyRatio] = useState<number | null>(null);
+  const [isConsistent, setIsConsistent] = useState<boolean | null>(null);
 
   const ahpScale = [
     { value: 9, label: '9 - Mutlak lebih penting' },
@@ -116,6 +120,10 @@ const CriteriaManagement = () => {
       newMatrix[j][i] = 1 / value;
       setPairwiseMatrix(newMatrix);
 
+      // Reset consistency status when matrix changes
+      setConsistencyRatio(null);
+      setIsConsistent(null);
+
       // Save to database
       const criteria1Id = criteria[i].id;
       const criteria2Id = criteria[j].id;
@@ -169,27 +177,94 @@ const CriteriaManagement = () => {
       );
 
       // Hitung Consistency Index (CI)
-      const lambda = pairwiseMatrix.reduce((sum, row, i) => {
-        const weightedSum = row.reduce((s, value, j) => s + value * weights[j], 0);
-        return sum + weightedSum * weights[i];
-      }, 0);
+      const lambda = weights.reduce((sum, weight, i) => {
+        const weightedSum = pairwiseMatrix[i].reduce((s, value, j) => s + value * weights[j], 0);
+        return sum + weightedSum / weight;
+      }, 0) / criteria.length;
 
       const ci = (lambda - criteria.length) / (criteria.length - 1);
-      const ri = [0, 0, 0.52, 0.89, 1.11, 1.25, 1.35, 1.40, 1.45][criteria.length - 1];
+      
+      // Random Index (RI) for different matrix sizes
+      const riValues = [0, 0, 0.58, 0.9, 1.12, 1.24, 1.32, 1.41, 1.45, 1.49];
+      const ri = criteria.length <= 10 ? riValues[criteria.length - 1] : 1.5;
+      
+      // Calculate Consistency Ratio
       const cr = ci / ri;
-
+      
+      setConsistencyRatio(cr);
+      setIsConsistent(cr <= 0.1);
+      
       console.log('Weights:', weights);
       console.log('Lambda Max:', lambda);
       console.log('CI:', ci);
       console.log('CR:', cr);
 
-      // Save weights to database
+      // Save weights to database only if consistent or forced
+      if (cr <= 0.1) {
+        // Update weights in database
+        const updatedCriteria = criteria.map((criterion, index) => ({
+          ...criterion,
+          weight: weights[index]
+        }));
+
+        for (const criterion of updatedCriteria) {
+          await supabase
+            .from('criteria')
+            .update({ weight: criterion.weight })
+            .eq('id', criterion.id);
+        }
+
+        setCriteria(updatedCriteria);
+
+        toast({
+          title: "Perhitungan Berhasil",
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten)`,
+        });
+        return { weights, cr, isConsistent: true };
+      } else {
+        toast({
+          title: "Peringatan",
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten)`,
+          variant: "destructive",
+        });
+        return { weights, cr, isConsistent: false };
+      }
+    } catch (error) {
+      console.error('Error calculating weights:', error);
+      toast({
+        title: "Error",
+        description: "Gagal menghitung bobot kriteria",
+        variant: "destructive",
+      });
+      return null;
+    } finally {
+      setSavingMatrix(false);
+    }
+  };
+
+  const forceUpdateWeights = async () => {
+    if (consistencyRatio === null) return;
+    
+    try {
+      setSavingMatrix(true);
+      
+      // Normalisasi matriks
+      const normalizedMatrix = pairwiseMatrix.map((row, i) => {
+        const columnSum = pairwiseMatrix.reduce((sum, r) => sum + r[i], 0);
+        return row.map(value => value / columnSum);
+      });
+
+      // Hitung eigen vector (rata-rata baris)
+      const weights = normalizedMatrix.map(row => 
+        row.reduce((sum, value) => sum + value, 0) / row.length
+      );
+      
+      // Update weights in database despite inconsistency
       const updatedCriteria = criteria.map((criterion, index) => ({
         ...criterion,
         weight: weights[index]
       }));
 
-      // Update weights in database
       for (const criterion of updatedCriteria) {
         await supabase
           .from('criteria')
@@ -198,26 +273,18 @@ const CriteriaManagement = () => {
       }
 
       setCriteria(updatedCriteria);
-
-      if (cr <= 0.1) {
-        toast({
-          title: "Perhitungan Berhasil",
-          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten)`,
-        });
-      } else {
-        toast({
-          title: "Peringatan",
-          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten)`,
-          variant: "destructive",
-        });
-      }
-
-      return { weights, cr };
+      
+      toast({
+        title: "Bobot Tersimpan",
+        description: `Bobot tersimpan meskipun CR: ${(consistencyRatio * 100).toFixed(2)}% (tidak konsisten)`,
+        variant: "warning",
+      });
+      
     } catch (error) {
-      console.error('Error calculating weights:', error);
+      console.error('Error forcing weights update:', error);
       toast({
         title: "Error",
-        description: "Gagal menghitung bobot kriteria",
+        description: "Gagal memperbarui bobot kriteria",
         variant: "destructive",
       });
     } finally {
@@ -314,6 +381,30 @@ const CriteriaManagement = () => {
               </tbody>
             </table>
           </div>
+          
+          {consistencyRatio !== null && (
+            <Alert className={`mt-4 ${isConsistent ? 'bg-green-50' : 'bg-amber-50'}`}>
+              <AlertCircle className={isConsistent ? 'text-green-600' : 'text-amber-600'} />
+              <AlertTitle className={isConsistent ? 'text-green-800' : 'text-amber-800'}>
+                {isConsistent ? 'Perbandingan Konsisten' : 'Perbandingan Tidak Konsisten'}
+              </AlertTitle>
+              <AlertDescription className={isConsistent ? 'text-green-700' : 'text-amber-700'}>
+                Consistency Ratio (CR): {(consistencyRatio * 100).toFixed(2)}%
+                {!isConsistent && (
+                  <div className="mt-2">
+                    <p>Nilai CR melebihi 10% (0.1). Sebaiknya perbaiki perbandingan berpasangan agar lebih konsisten.</p>
+                    <Button 
+                      variant="outline" 
+                      className="mt-2" 
+                      onClick={forceUpdateWeights}
+                    >
+                      Gunakan Bobot Meskipun Tidak Konsisten
+                    </Button>
+                  </div>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           
           <div className="mt-6 flex justify-center">
             <Button 

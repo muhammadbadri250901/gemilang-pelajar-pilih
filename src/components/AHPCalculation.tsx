@@ -1,11 +1,13 @@
+
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
-import { Calculator, CheckCircle } from 'lucide-react';
+import { Calculator, CheckCircle, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface Student {
   id: string;
@@ -52,6 +54,8 @@ const AHPCalculation = () => {
   const [scores, setScores] = useState<Score[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weightWarning, setWeightWarning] = useState<boolean>(false);
+  const [scoreWarning, setScoreWarning] = useState<boolean>(false);
 
   useEffect(() => {
     // Check if there are already results in the database
@@ -125,6 +129,8 @@ const AHPCalculation = () => {
   const loadData = async () => {
     setLoading(true);
     setError(null);
+    setWeightWarning(false);
+    setScoreWarning(false);
     
     try {
       // Load criteria with weights
@@ -135,14 +141,23 @@ const AHPCalculation = () => {
       if (criteriaError) throw criteriaError;
 
       // Check if criteria weights are set
-      const missingWeights = criteriaData?.some(c => c.weight === null || c.weight === undefined);
-      if (missingWeights) {
+      const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined);
+      if (!criteriaWithWeights || criteriaWithWeights.length === 0) {
+        setWeightWarning(true);
         toast({
           title: "Peringatan",
           description: "Bobot kriteria belum dihitung. Silahkan hitung bobot di halaman Kriteria terlebih dahulu.",
           variant: "destructive",
         });
+        setLoading(false);
         return false;
+      }
+      
+      // Check if the weights sum to approximately 1
+      const weightSum = criteriaWithWeights.reduce((sum, c) => sum + (c.weight || 0), 0);
+      if (Math.abs(weightSum - 1) > 0.1) {
+        console.warn("Weight sum is not close to 1:", weightSum);
+        setError(`Total bobot kriteria (${weightSum.toFixed(2)}) tidak mendekati 1. Perhitungan AHP mungkin tidak akurat.`);
       }
 
       setCriteria(criteriaData || []);
@@ -160,6 +175,7 @@ const AHPCalculation = () => {
           description: "Belum ada data siswa. Silahkan tambahkan data siswa terlebih dahulu.",
           variant: "destructive",
         });
+        setLoading(false);
         return false;
       }
 
@@ -175,6 +191,9 @@ const AHPCalculation = () => {
 
       // Check if every student has scores for every criteria
       let missingScores = false;
+      let missingStudentName = '';
+      let missingCriteriaName = '';
+      
       for (const student of studentsData) {
         for (const criterion of criteriaData) {
           const hasScore = scoresData?.some(
@@ -183,6 +202,8 @@ const AHPCalculation = () => {
           
           if (!hasScore) {
             missingScores = true;
+            missingStudentName = student.name;
+            missingCriteriaName = criterion.name;
             break;
           }
         }
@@ -191,11 +212,14 @@ const AHPCalculation = () => {
       }
 
       if (missingScores) {
+        setScoreWarning(true);
+        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Contoh: ${missingStudentName} belum memiliki nilai untuk kriteria ${missingCriteriaName}.`);
         toast({
           title: "Peringatan",
-          description: "Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria.",
+          description: `Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria.`,
           variant: "destructive",
         });
+        setLoading(false);
         return false;
       }
 
@@ -265,7 +289,7 @@ const AHPCalculation = () => {
         };
       });
       
-      // Sort by AHP score
+      // Sort by AHP score in descending order
       ahpResults.sort((a, b) => b.ahpScore - a.ahpScore);
       
       // Assign ranks
@@ -305,6 +329,7 @@ const AHPCalculation = () => {
         description: "Gagal menghitung AHP",
         variant: "destructive",
       });
+      setCalculationStep(0);
       return false;
     }
   };
@@ -387,9 +412,41 @@ const AHPCalculation = () => {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="bg-red-50 text-red-700 p-4 rounded-md mb-4">
-              {error}
-            </div>
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Peringatan</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {weightWarning && (
+            <Alert variant="warning" className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle>Bobot Kriteria Belum Dihitung</AlertTitle>
+              <AlertDescription>
+                <p>Sebelum melakukan perhitungan AHP, Anda harus menghitung bobot kriteria terlebih dahulu.</p>
+                <ol className="list-decimal ml-5 mt-2 space-y-1">
+                  <li>Buka tab "Kriteria" di menu</li>
+                  <li>Isi perbandingan berpasangan antar kriteria</li>
+                  <li>Klik tombol "Hitung Bobot Kriteria"</li>
+                  <li>Pastikan Consistency Ratio (CR) kurang dari 0,1</li>
+                </ol>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {scoreWarning && (
+            <Alert variant="warning" className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle>Data Nilai Tidak Lengkap</AlertTitle>
+              <AlertDescription>
+                <p>Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria.</p>
+                <ol className="list-decimal ml-5 mt-2 space-y-1">
+                  <li>Pastikan setiap siswa memiliki nilai untuk semua kriteria yang ada</li>
+                  <li>Buka tab "Data Siswa" untuk mengisi atau memperbaiki nilai</li>
+                </ol>
+              </AlertDescription>
+            </Alert>
           )}
 
           {calculationStep === 0 && (
@@ -446,7 +503,7 @@ const AHPCalculation = () => {
             </div>
           )}
 
-          {results && (
+          {results && results.length > 0 && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">Hasil Perhitungan</h3>
@@ -516,6 +573,24 @@ const AHPCalculation = () => {
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {calculationStep === 3 && (!results || results.length === 0) && (
+            <Alert className="mt-4 bg-amber-50">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle>Tidak Ada Hasil</AlertTitle>
+              <AlertDescription>
+                Perhitungan selesai tetapi tidak ada hasil yang ditampilkan. Kemungkinan penyebabnya:
+                <ul className="list-disc ml-5 mt-2 space-y-1">
+                  <li>Bobot kriteria tidak dihitung dengan benar (CR ≤ 0,1)</li>
+                  <li>Data siswa atau nilai tidak lengkap</li>
+                  <li>Terjadi kesalahan saat menyimpan hasil ke database</li>
+                </ul>
+                <Button className="mt-3" onClick={resetCalculation}>
+                  Reset dan Coba Lagi
+                </Button>
+              </AlertDescription>
+            </Alert>
           )}
         </CardContent>
       </Card>
