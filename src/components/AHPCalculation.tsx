@@ -224,7 +224,10 @@ const AHPCalculation = () => {
 
       if (missingScores) {
         setScoreWarning(true);
-        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Detail yang hilang: ${missingDetails.slice(0, 3).join(', ')}${missingDetails.length > 3 ? ` dan ${missingDetails.length - 3} lainnya` : ''}.`);
+        const detailsText = missingDetails.length > 3 
+          ? `${missingDetails.slice(0, 3).join(', ')} dan ${missingDetails.length - 3} lainnya`
+          : missingDetails.join(', ');
+        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Detail yang hilang: ${detailsText}.`);
         toast({
           title: "Peringatan",
           description: `${missingDetails.length} nilai siswa belum lengkap untuk semua kriteria.`,
@@ -441,7 +444,7 @@ const AHPCalculation = () => {
                   <li>Isi perbandingan berpasangan antar kriteria</li>
                   <li>Klik tombol "Hitung Bobot Kriteria"</li>
                   <li>Pastikan Consistency Ratio (CR) kurang dari 0,1 (10%)</li>
-                  <li>Jika CR > 10%, perbaiki perbandingan atau gunakan "Gunakan Bobot Meskipun Tidak Konsisten"</li>
+                  <li>Jika CR &gt; 10%, perbaiki perbandingan atau gunakan "Gunakan Bobot Meskipun Tidak Konsisten"</li>
                 </ol>
               </AlertDescription>
             </Alert>
@@ -595,7 +598,7 @@ const AHPCalculation = () => {
               <AlertDescription>
                 Perhitungan selesai tetapi tidak ada hasil yang ditampilkan. Kemungkinan penyebabnya:
                 <ul className="list-disc ml-5 mt-2 space-y-1">
-                  <li>Bobot kriteria tidak dihitung dengan benar (CR > 10%)</li>
+                  <li>Bobot kriteria tidak dihitung dengan benar (CR &gt; 10%)</li>
                   <li>Data siswa atau nilai tidak lengkap</li>
                   <li>Terjadi kesalahan saat menyimpan hasil ke database</li>
                 </ul>
