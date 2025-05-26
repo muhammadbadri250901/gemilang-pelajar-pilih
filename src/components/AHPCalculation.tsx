@@ -140,8 +140,8 @@ const AHPCalculation = () => {
 
       if (criteriaError) throw criteriaError;
 
-      // Check if criteria weights are set
-      const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined);
+      // Check if criteria weights are set and consistent
+      const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
       if (!criteriaWithWeights || criteriaWithWeights.length === 0) {
         setWeightWarning(true);
         toast({
@@ -153,11 +153,27 @@ const AHPCalculation = () => {
         return false;
       }
       
+      // Check if all criteria have weights
+      const allCriteriaHaveWeights = criteriaData?.every(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
+      if (!allCriteriaHaveWeights) {
+        setWeightWarning(true);
+        setError("Tidak semua kriteria memiliki bobot. Pastikan semua kriteria telah dihitung bobotnya di halaman Kriteria.");
+        toast({
+          title: "Peringatan",
+          description: "Tidak semua kriteria memiliki bobot yang valid.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return false;
+      }
+      
       // Check if the weights sum to approximately 1
       const weightSum = criteriaWithWeights.reduce((sum, c) => sum + (c.weight || 0), 0);
       if (Math.abs(weightSum - 1) > 0.1) {
         console.warn("Weight sum is not close to 1:", weightSum);
-        setError(`Total bobot kriteria (${weightSum.toFixed(2)}) tidak mendekati 1. Perhitungan AHP mungkin tidak akurat.`);
+        setError(`Total bobot kriteria (${weightSum.toFixed(3)}) tidak mendekati 1. Silahkan perbaiki perhitungan bobot di halaman Kriteria.`);
+        setLoading(false);
+        return false;
       }
 
       setCriteria(criteriaData || []);
@@ -191,32 +207,27 @@ const AHPCalculation = () => {
 
       // Check if every student has scores for every criteria
       let missingScores = false;
-      let missingStudentName = '';
-      let missingCriteriaName = '';
+      let missingDetails = [];
       
       for (const student of studentsData) {
         for (const criterion of criteriaData) {
           const hasScore = scoresData?.some(
-            score => score.student_id === student.id && score.criteria_id === criterion.id
+            score => score.student_id === student.id && score.criteria_id === criterion.id && score.score !== null && score.score !== undefined
           );
           
           if (!hasScore) {
             missingScores = true;
-            missingStudentName = student.name;
-            missingCriteriaName = criterion.name;
-            break;
+            missingDetails.push(`${student.name} - ${criterion.name}`);
           }
         }
-        
-        if (missingScores) break;
       }
 
       if (missingScores) {
         setScoreWarning(true);
-        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Contoh: ${missingStudentName} belum memiliki nilai untuk kriteria ${missingCriteriaName}.`);
+        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Detail yang hilang: ${missingDetails.slice(0, 3).join(', ')}${missingDetails.length > 3 ? ` dan ${missingDetails.length - 3} lainnya` : ''}.`);
         toast({
           title: "Peringatan",
-          description: `Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria.`,
+          description: `${missingDetails.length} nilai siswa belum lengkap untuk semua kriteria.`,
           variant: "destructive",
         });
         setLoading(false);
@@ -420,7 +431,7 @@ const AHPCalculation = () => {
           )}
 
           {weightWarning && (
-            <Alert variant="warning" className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
+            <Alert className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
               <AlertTriangle className="h-4 w-4 text-amber-600" />
               <AlertTitle>Bobot Kriteria Belum Dihitung</AlertTitle>
               <AlertDescription>
@@ -429,14 +440,15 @@ const AHPCalculation = () => {
                   <li>Buka tab "Kriteria" di menu</li>
                   <li>Isi perbandingan berpasangan antar kriteria</li>
                   <li>Klik tombol "Hitung Bobot Kriteria"</li>
-                  <li>Pastikan Consistency Ratio (CR) kurang dari 0,1</li>
+                  <li>Pastikan Consistency Ratio (CR) kurang dari 0,1 (10%)</li>
+                  <li>Jika CR > 10%, perbaiki perbandingan atau gunakan "Gunakan Bobot Meskipun Tidak Konsisten"</li>
                 </ol>
               </AlertDescription>
             </Alert>
           )}
 
           {scoreWarning && (
-            <Alert variant="warning" className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
+            <Alert className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
               <AlertTriangle className="h-4 w-4 text-amber-600" />
               <AlertTitle>Data Nilai Tidak Lengkap</AlertTitle>
               <AlertDescription>
@@ -444,6 +456,7 @@ const AHPCalculation = () => {
                 <ol className="list-decimal ml-5 mt-2 space-y-1">
                   <li>Pastikan setiap siswa memiliki nilai untuk semua kriteria yang ada</li>
                   <li>Buka tab "Data Siswa" untuk mengisi atau memperbaiki nilai</li>
+                  <li>Nilai tidak boleh kosong atau nol</li>
                 </ol>
               </AlertDescription>
             </Alert>
@@ -522,7 +535,7 @@ const AHPCalculation = () => {
                       <div key={criterion.id} className="text-center p-3 bg-blue-50 rounded-lg">
                         <div className="font-semibold text-blue-900">{criterion.name}</div>
                         <div className="text-2xl font-bold text-blue-700">
-                          {criterion.weight !== undefined ? (criterion.weight * 100).toFixed(0) : 0}%
+                          {criterion.weight !== undefined ? (criterion.weight * 100).toFixed(1) : 0}%
                         </div>
                       </div>
                     ))}
@@ -582,7 +595,7 @@ const AHPCalculation = () => {
               <AlertDescription>
                 Perhitungan selesai tetapi tidak ada hasil yang ditampilkan. Kemungkinan penyebabnya:
                 <ul className="list-disc ml-5 mt-2 space-y-1">
-                  <li>Bobot kriteria tidak dihitung dengan benar (CR ≤ 0,1)</li>
+                  <li>Bobot kriteria tidak dihitung dengan benar (CR > 10%)</li>
                   <li>Data siswa atau nilai tidak lengkap</li>
                   <li>Terjadi kesalahan saat menyimpan hasil ke database</li>
                 </ul>

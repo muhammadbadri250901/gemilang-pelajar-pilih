@@ -218,13 +218,13 @@ const CriteriaManagement = () => {
 
         toast({
           title: "Perhitungan Berhasil",
-          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten)`,
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Konsisten - Sangat Baik!)`,
         });
         return { weights, cr, isConsistent: true };
       } else {
         toast({
           title: "Peringatan",
-          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten)`,
+          description: `Consistency Ratio: ${(cr * 100).toFixed(2)}% (Tidak Konsisten - Perbaiki Perbandingan!)`,
           variant: "destructive",
         });
         return { weights, cr, isConsistent: false };
@@ -277,7 +277,6 @@ const CriteriaManagement = () => {
       toast({
         title: "Bobot Tersimpan",
         description: `Bobot tersimpan meskipun CR: ${(consistencyRatio * 100).toFixed(2)}% (tidak konsisten)`,
-        variant: "warning",
       });
       
     } catch (error) {
@@ -312,7 +311,7 @@ const CriteriaManagement = () => {
               <div key={criterion.id} className="p-4 border rounded-lg bg-gray-50">
                 <h3 className="font-semibold text-gray-900">{criterion.name}</h3>
                 <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
-                {criterion.weight !== undefined && (
+                {criterion.weight !== undefined && criterion.weight > 0 && (
                   <p className="text-sm font-semibold text-blue-700 mt-2">
                     Bobot: {(criterion.weight * 100).toFixed(2)}%
                   </p>
@@ -386,19 +385,28 @@ const CriteriaManagement = () => {
             <Alert className={`mt-4 ${isConsistent ? 'bg-green-50' : 'bg-amber-50'}`}>
               <AlertCircle className={isConsistent ? 'text-green-600' : 'text-amber-600'} />
               <AlertTitle className={isConsistent ? 'text-green-800' : 'text-amber-800'}>
-                {isConsistent ? 'Perbandingan Konsisten' : 'Perbandingan Tidak Konsisten'}
+                {isConsistent ? 'Perbandingan Konsisten ✅' : 'Perbandingan Tidak Konsisten ⚠️'}
               </AlertTitle>
               <AlertDescription className={isConsistent ? 'text-green-700' : 'text-amber-700'}>
-                Consistency Ratio (CR): {(consistencyRatio * 100).toFixed(2)}%
-                {!isConsistent && (
+                <p><strong>Consistency Ratio (CR): {(consistencyRatio * 100).toFixed(2)}%</strong></p>
+                {isConsistent ? (
+                  <p className="mt-1">Sangat baik! CR kurang dari 10% menunjukkan perbandingan yang konsisten dan dapat diandalkan.</p>
+                ) : (
                   <div className="mt-2">
-                    <p>Nilai CR melebihi 10% (0.1). Sebaiknya perbaiki perbandingan berpasangan agar lebih konsisten.</p>
+                    <p>CR melebihi 10% (0.1). Sebaiknya perbaiki perbandingan berpasangan agar lebih konsisten.</p>
+                    <p className="text-sm mt-1">
+                      <strong>Panduan CR:</strong><br/>
+                      • 0-5%: Sangat konsisten<br/>
+                      • 5-10%: Konsisten (dapat diterima)<br/>
+                      • &gt;10%: Tidak konsisten (perlu diperbaiki)
+                    </p>
                     <Button 
                       variant="outline" 
-                      className="mt-2" 
+                      className="mt-3" 
                       onClick={forceUpdateWeights}
+                      disabled={savingMatrix}
                     >
-                      Gunakan Bobot Meskipun Tidak Konsisten
+                      {savingMatrix ? 'Menyimpan...' : 'Gunakan Bobot Meskipun Tidak Konsisten'}
                     </Button>
                   </div>
                 )}
@@ -426,6 +434,9 @@ const CriteriaManagement = () => {
               <div>• 9 = Mutlak lebih penting</div>
               <div>• 2,4,6,8 = Nilai antara</div>
             </div>
+            <p className="text-xs text-blue-600 mt-2">
+              <strong>Tips:</strong> Mulai dengan perbandingan yang jelas, lalu sesuaikan secara bertahap untuk mencapai CR &lt; 10%
+            </p>
           </div>
         </CardContent>
       </Card>
