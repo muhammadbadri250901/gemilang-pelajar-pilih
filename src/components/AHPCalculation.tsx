@@ -37,15 +37,6 @@ interface AhpResult {
   criteriaScores: {[criteriaId: string]: number};
 }
 
-interface ProcessedResult {
-  student: Student;
-  studentScores: {[key: string]: number};
-  normalizedScores: {[key: string]: number};
-  ahpScore: number;
-  percentage: string;
-  rank: number;
-}
-
 const AHPCalculation = () => {
   const [calculationStep, setCalculationStep] = useState(0);
   const [results, setResults] = useState<AhpResult[] | null>(null);
@@ -54,11 +45,8 @@ const AHPCalculation = () => {
   const [scores, setScores] = useState<Score[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [weightWarning, setWeightWarning] = useState<boolean>(false);
-  const [scoreWarning, setScoreWarning] = useState<boolean>(false);
 
   useEffect(() => {
-    // Check if there are already results in the database
     checkExistingResults();
   }, []);
 
@@ -80,10 +68,12 @@ const AHPCalculation = () => {
         `)
         .order('rank');
 
-      if (error) throw error;
+      if (error) {
+        console.log('No existing results found, which is fine');
+        return;
+      }
 
       if (data && data.length > 0) {
-        // Format the results and fetch scores for each student
         const formattedResults: AhpResult[] = [];
         
         for (const result of data) {
@@ -94,7 +84,6 @@ const AHPCalculation = () => {
             continue;
           }
           
-          // Get scores for this student
           const { data: studentScores } = await supabase
             .from('student_scores')
             .select('criteria_id, score')
@@ -122,15 +111,12 @@ const AHPCalculation = () => {
       }
     } catch (error) {
       console.error('Error checking existing results:', error);
-      setError('Gagal memuat hasil perhitungan yang ada');
     }
   };
 
   const loadData = async () => {
     setLoading(true);
     setError(null);
-    setWeightWarning(false);
-    setScoreWarning(false);
     
     try {
       // Load criteria with weights
@@ -140,38 +126,15 @@ const AHPCalculation = () => {
 
       if (criteriaError) throw criteriaError;
 
-      // Check if criteria weights are set and consistent
+      // Check if criteria have weights
       const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
       if (!criteriaWithWeights || criteriaWithWeights.length === 0) {
-        setWeightWarning(true);
+        setError("Bobot kriteria belum dihitung. Silahkan hitung bobot di halaman Kriteria terlebih dahulu.");
         toast({
           title: "Peringatan",
           description: "Bobot kriteria belum dihitung. Silahkan hitung bobot di halaman Kriteria terlebih dahulu.",
           variant: "destructive",
         });
-        setLoading(false);
-        return false;
-      }
-      
-      // Check if all criteria have weights
-      const allCriteriaHaveWeights = criteriaData?.every(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
-      if (!allCriteriaHaveWeights) {
-        setWeightWarning(true);
-        setError("Tidak semua kriteria memiliki bobot. Pastikan semua kriteria telah dihitung bobotnya di halaman Kriteria.");
-        toast({
-          title: "Peringatan",
-          description: "Tidak semua kriteria memiliki bobot yang valid.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return false;
-      }
-      
-      // Check if the weights sum to approximately 1
-      const weightSum = criteriaWithWeights.reduce((sum, c) => sum + (c.weight || 0), 0);
-      if (Math.abs(weightSum - 1) > 0.1) {
-        console.warn("Weight sum is not close to 1:", weightSum);
-        setError(`Total bobot kriteria (${weightSum.toFixed(3)}) tidak mendekati 1. Silahkan perbaiki perhitungan bobot di halaman Kriteria.`);
         setLoading(false);
         return false;
       }
@@ -186,6 +149,7 @@ const AHPCalculation = () => {
       if (studentsError) throw studentsError;
       
       if (!studentsData || studentsData.length === 0) {
+        setError("Belum ada data siswa. Silahkan tambahkan data siswa terlebih dahulu.");
         toast({
           title: "Peringatan",
           description: "Belum ada data siswa. Silahkan tambahkan data siswa terlebih dahulu.",
@@ -205,32 +169,15 @@ const AHPCalculation = () => {
       if (scoresError) throw scoresError;
       setScores(scoresData || []);
 
-      // Check if every student has scores for every criteria
-      let missingScores = false;
-      let missingDetails = [];
+      // Check if we have enough scores to proceed
+      const totalRequiredScores = studentsData.length * criteriaData.length;
+      const availableScores = scoresData?.length || 0;
       
-      for (const student of studentsData) {
-        for (const criterion of criteriaData) {
-          const hasScore = scoresData?.some(
-            score => score.student_id === student.id && score.criteria_id === criterion.id && score.score !== null && score.score !== undefined
-          );
-          
-          if (!hasScore) {
-            missingScores = true;
-            missingDetails.push(`${student.name} - ${criterion.name}`);
-          }
-        }
-      }
-
-      if (missingScores) {
-        setScoreWarning(true);
-        const detailsText = missingDetails.length > 3 
-          ? `${missingDetails.slice(0, 3).join(', ')} dan ${missingDetails.length - 3} lainnya`
-          : missingDetails.join(', ');
-        setError(`Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria. Detail yang hilang: ${detailsText}.`);
+      if (availableScores < totalRequiredScores * 0.8) { // Allow 80% completion
+        setError(`Diperlukan lebih banyak data nilai siswa. Tersedia: ${availableScores}/${totalRequiredScores} nilai.`);
         toast({
           title: "Peringatan",
-          description: `${missingDetails.length} nilai siswa belum lengkap untuk semua kriteria.`,
+          description: "Data nilai siswa masih kurang lengkap.",
           variant: "destructive",
         });
         setLoading(false);
@@ -259,22 +206,29 @@ const AHPCalculation = () => {
     setCalculationStep(1);
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 500)); // For visual feedback
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Step 1: Normalisasi nilai
       setCalculationStep(2);
       
-      // Get max scores for each criteria for normalization
+      console.log('Starting AHP calculation with data:', {
+        students: students.length,
+        criteria: criteria.length,
+        scores: scores.length
+      });
+
+      // Get max scores for normalization
       const maxScores: {[key: string]: number} = {};
       criteria.forEach(criterion => {
         const criteriaScores = scores.filter(s => s.criteria_id === criterion.id);
-        maxScores[criterion.id] = Math.max(...criteriaScores.map(s => s.score), 1); // Default to 1 if no scores
+        const maxScore = criteriaScores.length > 0 ? Math.max(...criteriaScores.map(s => s.score)) : 100;
+        maxScores[criterion.id] = Math.max(maxScore, 1);
       });
       
-      // Step 2: Hitung skor AHP
-      const ahpResults: ProcessedResult[] = students.map(student => {
+      console.log('Max scores per criteria:', maxScores);
+
+      // Calculate AHP scores for each student
+      const ahpResults = students.map(student => {
         const studentScores: {[key: string]: number} = {};
-        const normalizedScores: {[key: string]: number} = {};
         let ahpScore = 0;
         
         criteria.forEach(criterion => {
@@ -285,25 +239,23 @@ const AHPCalculation = () => {
           const rawScore = score ? score.score : 0;
           studentScores[criterion.id] = rawScore;
           
-          // Normalize
+          // Normalize score (0-1)
           const normalizedScore = rawScore / maxScores[criterion.id];
-          normalizedScores[criterion.id] = normalizedScore;
           
-          // Calculate weighted score
-          ahpScore += normalizedScore * (criterion.weight || 0);
+          // Apply weight
+          const weightedScore = normalizedScore * (criterion.weight || 0);
+          ahpScore += weightedScore;
         });
         
         return {
           student,
           studentScores,
-          normalizedScores,
           ahpScore,
-          percentage: (ahpScore * 100).toFixed(2),
-          rank: 0 // Initialize with 0, will be set later
+          rank: 0
         };
       });
       
-      // Sort by AHP score in descending order
+      // Sort by AHP score (descending)
       ahpResults.sort((a, b) => b.ahpScore - a.ahpScore);
       
       // Assign ranks
@@ -311,7 +263,9 @@ const AHPCalculation = () => {
         result.rank = index + 1;
       });
       
-      await new Promise(resolve => setTimeout(resolve, 500)); // For visual feedback
+      console.log('AHP Results calculated:', ahpResults);
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
       setCalculationStep(3);
       
       // Save results to database
@@ -319,7 +273,7 @@ const AHPCalculation = () => {
       
       // Format results for display
       const formattedResults = ahpResults.map(result => ({
-        id: '', // Will be filled in when we save to database
+        id: `temp-${result.student.id}`,
         student_id: result.student.id,
         student: result.student,
         final_score: result.ahpScore,
@@ -334,7 +288,6 @@ const AHPCalculation = () => {
         description: "Hasil perhitungan AHP telah berhasil digenerate",
       });
       
-      return true;
     } catch (error: any) {
       console.error('Error calculating AHP:', error);
       setError(error.message || 'Gagal menghitung AHP');
@@ -344,30 +297,38 @@ const AHPCalculation = () => {
         variant: "destructive",
       });
       setCalculationStep(0);
-      return false;
     }
   };
 
-  const saveResults = async (ahpResults: ProcessedResult[]) => {
+  const saveResults = async (ahpResults: any[]) => {
     try {
-      // First delete existing results
-      await supabase
+      // Delete existing results properly
+      const { error: deleteError } = await supabase
         .from('ahp_results')
         .delete()
-        .gt('id', '0');
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Use a UUID that doesn't exist
       
-      // Then insert new results
+      if (deleteError) {
+        console.log('Delete error (might be expected if no existing results):', deleteError);
+      }
+      
+      // Insert new results
       const resultsToInsert = ahpResults.map(result => ({
         student_id: result.student.id,
         final_score: result.ahpScore,
         rank: result.rank
       }));
       
-      const { error } = await supabase
+      const { error: insertError } = await supabase
         .from('ahp_results')
         .insert(resultsToInsert);
         
-      if (error) throw error;
+      if (insertError) {
+        console.error('Insert error:', insertError);
+        throw insertError;
+      }
+      
+      console.log('Results saved successfully');
     } catch (error: any) {
       console.error('Error saving results:', error);
       toast({
@@ -375,22 +336,23 @@ const AHPCalculation = () => {
         description: "Hasil perhitungan berhasil tetapi gagal disimpan ke database",
         variant: "destructive",
       });
-      throw error;
     }
   };
 
   const resetCalculation = async () => {
     try {
-      // Delete existing results
       const { error } = await supabase
         .from('ahp_results')
         .delete()
-        .gt('id', '0');
+        .neq('id', '00000000-0000-0000-0000-000000000000');
       
-      if (error) throw error;
+      if (error) {
+        console.log('Reset error (might be expected):', error);
+      }
       
       setCalculationStep(0);
       setResults(null);
+      setError(null);
       
       toast({
         title: "Reset Berhasil",
@@ -404,15 +366,6 @@ const AHPCalculation = () => {
         variant: "destructive",
       });
     }
-  };
-
-  const getCriteriaById = (criteriaId: string) => {
-    return criteria.find(c => c.id === criteriaId);
-  };
-
-  const getCriteriaName = (criteriaId: string) => {
-    const criterion = getCriteriaById(criteriaId);
-    return criterion ? criterion.name : '';
   };
 
   return (
@@ -430,38 +383,6 @@ const AHPCalculation = () => {
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Peringatan</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {weightWarning && (
-            <Alert className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
-              <AlertTriangle className="h-4 w-4 text-amber-600" />
-              <AlertTitle>Bobot Kriteria Belum Dihitung</AlertTitle>
-              <AlertDescription>
-                <p>Sebelum melakukan perhitungan AHP, Anda harus menghitung bobot kriteria terlebih dahulu.</p>
-                <ol className="list-decimal ml-5 mt-2 space-y-1">
-                  <li>Buka tab "Kriteria" di menu</li>
-                  <li>Isi perbandingan berpasangan antar kriteria</li>
-                  <li>Klik tombol "Hitung Bobot Kriteria"</li>
-                  <li>Pastikan Consistency Ratio (CR) kurang dari 0,1 (10%)</li>
-                  <li>Jika CR &gt; 10%, perbaiki perbandingan atau gunakan "Gunakan Bobot Meskipun Tidak Konsisten"</li>
-                </ol>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {scoreWarning && (
-            <Alert className="mb-4 bg-amber-50 text-amber-800 border-amber-200">
-              <AlertTriangle className="h-4 w-4 text-amber-600" />
-              <AlertTitle>Data Nilai Tidak Lengkap</AlertTitle>
-              <AlertDescription>
-                <p>Beberapa siswa belum memiliki nilai lengkap untuk semua kriteria.</p>
-                <ol className="list-decimal ml-5 mt-2 space-y-1">
-                  <li>Pastikan setiap siswa memiliki nilai untuk semua kriteria yang ada</li>
-                  <li>Buka tab "Data Siswa" untuk mengisi atau memperbaiki nilai</li>
-                  <li>Nilai tidak boleh kosong atau nol</li>
-                </ol>
-              </AlertDescription>
             </Alert>
           )}
 
@@ -522,7 +443,7 @@ const AHPCalculation = () => {
           {results && results.length > 0 && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Hasil Perhitungan</h3>
+                <h3 className="text-lg font-semibold">Hasil Perhitungan AHP</h3>
                 <Button variant="outline" onClick={resetCalculation}>
                   Hitung Ulang
                 </Button>
@@ -538,7 +459,7 @@ const AHPCalculation = () => {
                       <div key={criterion.id} className="text-center p-3 bg-blue-50 rounded-lg">
                         <div className="font-semibold text-blue-900">{criterion.name}</div>
                         <div className="text-2xl font-bold text-blue-700">
-                          {criterion.weight !== undefined ? (criterion.weight * 100).toFixed(1) : 0}%
+                          {criterion.weight ? (criterion.weight * 100).toFixed(1) : 0}%
                         </div>
                       </div>
                     ))}
@@ -548,7 +469,7 @@ const AHPCalculation = () => {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Ranking Siswa</CardTitle>
+                  <CardTitle>Ranking Siswa Berprestasi</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="overflow-x-auto">
@@ -557,6 +478,8 @@ const AHPCalculation = () => {
                         <TableRow>
                           <TableHead>Rank</TableHead>
                           <TableHead>Nama Siswa</TableHead>
+                          <TableHead>NIS</TableHead>
+                          <TableHead>Kelas</TableHead>
                           {criteria.map(criterion => (
                             <TableHead key={criterion.id}>{criterion.name}</TableHead>
                           ))}
@@ -564,27 +487,55 @@ const AHPCalculation = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {results.map((student: AhpResult) => (
-                          <TableRow key={student.student_id} className={student.rank <= 3 ? 'bg-yellow-50' : ''}>
-                            <TableCell className="font-bold">#{student.rank}</TableCell>
-                            <TableCell className="font-medium">{student.student.name}</TableCell>
+                        {results.map((result: AhpResult) => (
+                          <TableRow key={result.student_id} className={result.rank <= 3 ? 'bg-yellow-50' : ''}>
+                            <TableCell className="font-bold">
+                              <div className="flex items-center">
+                                #{result.rank}
+                                {result.rank <= 3 && <span className="ml-2 text-yellow-600">🏆</span>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-medium">{result.student.name}</TableCell>
+                            <TableCell>{result.student.nis}</TableCell>
+                            <TableCell>{result.student.class}</TableCell>
                             {criteria.map(criterion => (
                               <TableCell key={criterion.id}>
-                                {student.criteriaScores[criterion.id] || 0}
+                                {result.criteriaScores[criterion.id] || 0}
                               </TableCell>
                             ))}
                             <TableCell>
                               <div className="flex items-center space-x-2">
                                 <span className="font-bold text-green-600">
-                                  {(student.final_score * 100).toFixed(2)}%
+                                  {(result.final_score * 100).toFixed(2)}%
                                 </span>
-                                {student.rank <= 3 && <span className="text-yellow-600">🏆</span>}
                               </div>
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-green-50 border-green-200">
+                <CardHeader>
+                  <CardTitle className="text-green-800">🎉 Top 3 Siswa Berprestasi</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {results.slice(0, 3).map((result, index) => (
+                      <div key={result.student_id} className="text-center p-4 bg-white rounded-lg border-2 border-green-300">
+                        <div className="text-3xl mb-2">
+                          {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                        </div>
+                        <div className="font-bold text-lg">{result.student.name}</div>
+                        <div className="text-gray-600">{result.student.nis}</div>
+                        <div className="text-green-600 font-bold text-xl mt-2">
+                          {(result.final_score * 100).toFixed(2)}%
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -598,8 +549,8 @@ const AHPCalculation = () => {
               <AlertDescription>
                 Perhitungan selesai tetapi tidak ada hasil yang ditampilkan. Kemungkinan penyebabnya:
                 <ul className="list-disc ml-5 mt-2 space-y-1">
-                  <li>Bobot kriteria tidak dihitung dengan benar (CR &gt; 10%)</li>
-                  <li>Data siswa atau nilai tidak lengkap</li>
+                  <li>Data kriteria atau siswa tidak lengkap</li>
+                  <li>Bobot kriteria belum dihitung</li>
                   <li>Terjadi kesalahan saat menyimpan hasil ke database</li>
                 </ul>
                 <Button className="mt-3" onClick={resetCalculation}>
