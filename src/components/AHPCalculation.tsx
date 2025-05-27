@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -134,7 +135,7 @@ const AHPCalculation = () => {
         throw criteriaError;
       }
 
-      console.log('Criteria data:', criteriaData);
+      console.log('Criteria data loaded:', criteriaData);
 
       // Check if criteria have weights
       const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
@@ -146,10 +147,8 @@ const AHPCalculation = () => {
           variant: "destructive",
         });
         setLoading(false);
-        return false;
+        return { success: false };
       }
-
-      setCriteria(criteriaData || []);
 
       console.log('Loading students data...');
       
@@ -163,7 +162,7 @@ const AHPCalculation = () => {
         throw studentsError;
       }
       
-      console.log('Students data:', studentsData);
+      console.log('Students data loaded:', studentsData);
       
       if (!studentsData || studentsData.length === 0) {
         setError("Belum ada data siswa. Silahkan tambahkan data siswa terlebih dahulu.");
@@ -173,10 +172,8 @@ const AHPCalculation = () => {
           variant: "destructive",
         });
         setLoading(false);
-        return false;
+        return { success: false };
       }
-
-      setStudents(studentsData);
 
       console.log('Loading scores data...');
       
@@ -190,8 +187,7 @@ const AHPCalculation = () => {
         throw scoresError;
       }
       
-      console.log('Scores data:', scoresData);
-      setScores(scoresData || []);
+      console.log('Scores data loaded:', scoresData);
 
       // Check if we have enough scores to proceed
       const totalRequiredScores = studentsData.length * criteriaData.length;
@@ -199,7 +195,7 @@ const AHPCalculation = () => {
       
       console.log(`Required scores: ${totalRequiredScores}, Available: ${availableScores}`);
       
-      if (availableScores < totalRequiredScores * 0.5) { // Allow 50% completion
+      if (availableScores < totalRequiredScores * 0.5) {
         setError(`Diperlukan lebih banyak data nilai siswa. Tersedia: ${availableScores}/${totalRequiredScores} nilai.`);
         toast({
           title: "Peringatan",
@@ -207,10 +203,15 @@ const AHPCalculation = () => {
           variant: "destructive",
         });
         setLoading(false);
-        return false;
+        return { success: false };
       }
 
-      return true;
+      return {
+        success: true,
+        criteria: criteriaData || [],
+        students: studentsData || [],
+        scores: scoresData || []
+      };
     } catch (error: any) {
       console.error('Error loading data:', error);
       setError(error.message || 'Gagal memuat data');
@@ -219,33 +220,41 @@ const AHPCalculation = () => {
         description: "Gagal memuat data",
         variant: "destructive",
       });
-      return false;
+      return { success: false };
     } finally {
       setLoading(false);
     }
   };
 
   const calculateAHP = async () => {
-    const dataReady = await loadData();
-    if (!dataReady) return;
+    console.log('Starting AHP calculation...');
+    
+    const loadResult = await loadData();
+    if (!loadResult.success) {
+      console.log('Data loading failed, aborting calculation');
+      return;
+    }
+    
+    const { criteria: loadedCriteria, students: loadedStudents, scores: loadedScores } = loadResult;
+    
+    console.log('Data loaded successfully:', {
+      criteria: loadedCriteria.length,
+      students: loadedStudents.length,
+      scores: loadedScores.length
+    });
     
     setCalculationStep(1);
     
     try {
       await new Promise(resolve => setTimeout(resolve, 500));
-
       setCalculationStep(2);
       
-      console.log('Starting AHP calculation with data:', {
-        students: students.length,
-        criteria: criteria.length,
-        scores: scores.length
-      });
+      console.log('Starting AHP calculation with loaded data');
 
       // Get max scores for normalization
       const maxScores: {[key: string]: number} = {};
-      criteria.forEach(criterion => {
-        const criteriaScores = scores.filter(s => s.criteria_id === criterion.id);
+      loadedCriteria.forEach(criterion => {
+        const criteriaScores = loadedScores.filter(s => s.criteria_id === criterion.id);
         const maxScore = criteriaScores.length > 0 ? Math.max(...criteriaScores.map(s => s.score)) : 100;
         maxScores[criterion.id] = Math.max(maxScore, 1);
       });
@@ -253,12 +262,12 @@ const AHPCalculation = () => {
       console.log('Max scores per criteria:', maxScores);
 
       // Calculate AHP scores for each student
-      const ahpResults = students.map(student => {
+      const ahpResults = loadedStudents.map(student => {
         const studentScores: {[key: string]: number} = {};
         let ahpScore = 0;
         
-        criteria.forEach(criterion => {
-          const score = scores.find(s => 
+        loadedCriteria.forEach(criterion => {
+          const score = loadedScores.find(s => 
             s.student_id === student.id && s.criteria_id === criterion.id
           );
           
@@ -272,10 +281,10 @@ const AHPCalculation = () => {
           const weightedScore = normalizedScore * (criterion.weight || 0);
           ahpScore += weightedScore;
           
-          console.log(`Student ${student.name}, Criteria ${criterion.name}: Raw=${rawScore}, Normalized=${normalizedScore}, Weighted=${weightedScore}`);
+          console.log(`Student ${student.name}, Criteria ${criterion.name}: Raw=${rawScore}, Normalized=${normalizedScore.toFixed(3)}, Weighted=${weightedScore.toFixed(3)}`);
         });
         
-        console.log(`Student ${student.name} final AHP score: ${ahpScore}`);
+        console.log(`Student ${student.name} final AHP score: ${ahpScore.toFixed(3)}`);
         
         return {
           student,
@@ -311,11 +320,15 @@ const AHPCalculation = () => {
         criteriaScores: result.studentScores
       }));
       
+      // Update state with loaded data
+      setCriteria(loadedCriteria);
+      setStudents(loadedStudents);
+      setScores(loadedScores);
       setResults(formattedResults);
       
       toast({
         title: "Perhitungan Selesai",
-        description: "Hasil perhitungan AHP telah berhasil digenerate",
+        description: `Hasil perhitungan AHP telah berhasil digenerate untuk ${ahpResults.length} siswa`,
       });
       
     } catch (error: any) {
@@ -323,7 +336,7 @@ const AHPCalculation = () => {
       setError(error.message || 'Gagal menghitung AHP');
       toast({
         title: "Error",
-        description: "Gagal menghitung AHP",
+        description: "Gagal menghitung AHP: " + (error.message || 'Unknown error'),
         variant: "destructive",
       });
       setCalculationStep(0);
@@ -389,6 +402,9 @@ const AHPCalculation = () => {
       setCalculationStep(0);
       setResults(null);
       setError(null);
+      setStudents([]);
+      setCriteria([]);
+      setScores([]);
       
       toast({
         title: "Reset Berhasil",
