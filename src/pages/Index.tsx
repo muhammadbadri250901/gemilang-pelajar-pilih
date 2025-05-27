@@ -16,6 +16,7 @@ const Index = () => {
     // Set up auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        console.log('Auth event:', event, 'Session:', session);
         setUser(session?.user || null);
         
         if (session?.user) {
@@ -27,22 +28,23 @@ const Index = () => {
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user || null);
-      
-      if (session?.user) {
-        fetchUserProfile(session.user.id);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error("Error getting session:", error);
+        setAuthError("Terjadi kesalahan saat memverifikasi sesi login");
+        toast({
+          title: "Error",
+          description: "Terjadi kesalahan saat memverifikasi sesi login",
+          variant: "destructive",
+        });
+      } else {
+        setUser(session?.user || null);
+        
+        if (session?.user) {
+          fetchUserProfile(session.user.id);
+        }
       }
       setLoading(false);
-    }).catch(error => {
-      console.error("Error getting session:", error);
-      setLoading(false);
-      setAuthError("Terjadi kesalahan saat memverifikasi sesi login");
-      toast({
-        title: "Error",
-        description: "Terjadi kesalahan saat memverifikasi sesi login",
-        variant: "destructive",
-      });
     });
 
     return () => subscription.unsubscribe();
@@ -51,44 +53,37 @@ const Index = () => {
   const fetchUserProfile = async (userId: string) => {
     try {
       setAuthError(null);
+      console.log('Fetching profile for user:', userId);
+      
       const { data, error } = await supabase
         .from('profiles')
         .select('username, role')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('Error fetching profile:', error);
+        
+        // If profile doesn't exist, create one
+        if (error.code === 'PGRST116') {
+          console.log('Profile not found, creating new profile');
+          await createUserProfile(userId);
+          return;
+        }
+        
         setAuthError("Gagal memuat profil pengguna");
         return;
       }
 
       if (data) {
+        console.log('Profile found:', data);
         setUserProfile({
           username: data.username || user?.email || 'User',
           role: data.role || 'user'
         });
       } else {
-        // If no profile exists, create one
-        const newProfile = {
-          id: userId,
-          username: user?.email || 'User',
-          role: 'user'
-        };
-        
-        const { error: insertError } = await supabase
-          .from('profiles')
-          .insert(newProfile);
-          
-        if (insertError) {
-          console.error('Error creating profile:', insertError);
-          return;
-        }
-        
-        setUserProfile({
-          username: newProfile.username,
-          role: newProfile.role
-        });
+        console.log('No profile data, creating new profile');
+        await createUserProfile(userId);
       }
     } catch (error) {
       console.error('Profile fetch error:', error);
@@ -96,13 +91,46 @@ const Index = () => {
     }
   };
 
+  const createUserProfile = async (userId: string) => {
+    try {
+      const newProfile = {
+        id: userId,
+        username: user?.email || 'User',
+        role: 'user'
+      };
+      
+      console.log('Creating profile:', newProfile);
+      
+      const { error: insertError } = await supabase
+        .from('profiles')
+        .insert(newProfile);
+        
+      if (insertError) {
+        console.error('Error creating profile:', insertError);
+        setAuthError("Gagal membuat profil pengguna");
+        return;
+      }
+      
+      console.log('Profile created successfully');
+      setUserProfile({
+        username: newProfile.username,
+        role: newProfile.role
+      });
+    } catch (error) {
+      console.error('Error in createUserProfile:', error);
+      setAuthError("Terjadi kesalahan saat membuat profil");
+    }
+  };
+
   const handleLogin = (userData: { username: string; role: string }) => {
+    console.log('Login successful:', userData);
     setUserProfile(userData);
     setAuthError(null);
   };
 
   const handleLogout = async () => {
     try {
+      console.log('Logging out...');
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       
@@ -127,7 +155,7 @@ const Index = () => {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-600">Memuat...</p>
         </div>
       </div>
     );
@@ -139,10 +167,13 @@ const Index = () => {
         <div className="text-center p-8 bg-red-50 rounded-lg max-w-md">
           <p className="text-red-600 mb-4">{authError}</p>
           <button 
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              setAuthError(null);
+              window.location.reload();
+            }}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
-            Refresh Halaman
+            Coba Lagi
           </button>
         </div>
       </div>

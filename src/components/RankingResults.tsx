@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,12 +37,17 @@ const RankingResults = () => {
 
   const fetchResults = async () => {
     try {
+      console.log('Fetching ranking results...');
+      
       // Get criteria mapping first
       const { data: criteriaData, error: criteriaError } = await supabase
         .from('criteria')
         .select('id, name');
 
-      if (criteriaError) throw criteriaError;
+      if (criteriaError) {
+        console.error('Error fetching criteria:', criteriaError);
+        throw criteriaError;
+      }
 
       // Create a map of criteria names to IDs
       const criteriaMapping: {[key: string]: string} = {};
@@ -51,6 +55,7 @@ const RankingResults = () => {
         criteriaMapping[criteria.name] = criteria.id;
       });
       setCriteriaMap(criteriaMapping);
+      console.log('Criteria mapping:', criteriaMapping);
 
       // Get AHP results
       const { data: ahpData, error: ahpError } = await supabase
@@ -68,9 +73,15 @@ const RankingResults = () => {
         `)
         .order('rank');
 
-      if (ahpError) throw ahpError;
+      if (ahpError) {
+        console.error('Error fetching AHP results:', ahpError);
+        throw ahpError;
+      }
+
+      console.log('AHP results:', ahpData);
 
       if (!ahpData || ahpData.length === 0) {
+        console.log('No AHP results found');
         setLoading(false);
         return;
       }
@@ -82,15 +93,29 @@ const RankingResults = () => {
         .select('student_id, criteria_id, score')
         .in('student_id', studentIds);
 
-      if (scoresError) throw scoresError;
+      if (scoresError) {
+        console.error('Error fetching scores:', scoresError);
+        throw scoresError;
+      }
+
+      console.log('Scores data:', scoresData);
 
       // Process the results
-      const processedResults = await Promise.all(ahpData.map(async (result) => {
+      const processedResults: AhpResult[] = [];
+      
+      for (const result of ahpData) {
+        const student = result.students as Student;
+        
+        if (!student) {
+          console.error('Student data is missing for result:', result);
+          continue;
+        }
+        
         // Get scores for this student
         const studentScores = scoresData?.filter(
-          score => score.student_id === result.student_id
+          score => score.student_id === student.id
         ) || [];
-
+        
         // Map scores to criteria
         const academicId = criteriaMapping['Akademik'];
         const behaviorId = criteriaMapping['Perilaku'];
@@ -103,10 +128,10 @@ const RankingResults = () => {
           return score ? score.score : 0;
         };
 
-        return {
+        processedResults.push({
           id: result.id,
           student_id: result.student_id,
-          student: result.students as Student,
+          student,
           final_score: result.final_score,
           rank: result.rank,
           criteria: {
@@ -116,9 +141,10 @@ const RankingResults = () => {
             leadership: getScore(leadershipId),
             attendance: getScore(attendanceId)
           }
-        };
-      }));
-
+        });
+      }
+      
+      console.log('Processed results:', processedResults);
       setResults(processedResults);
     } catch (error) {
       console.error('Error fetching ranking results:', error);

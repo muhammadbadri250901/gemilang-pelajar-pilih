@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,6 +51,8 @@ const AHPCalculation = () => {
 
   const checkExistingResults = async () => {
     try {
+      console.log('Checking for existing AHP results...');
+      
       const { data, error } = await supabase
         .from('ahp_results')
         .select(`
@@ -69,11 +70,13 @@ const AHPCalculation = () => {
         .order('rank');
 
       if (error) {
-        console.log('No existing results found, which is fine');
+        console.log('No existing results found or error:', error);
         return;
       }
 
       if (data && data.length > 0) {
+        console.log('Found existing results:', data);
+        
         const formattedResults: AhpResult[] = [];
         
         for (const result of data) {
@@ -119,12 +122,19 @@ const AHPCalculation = () => {
     setError(null);
     
     try {
+      console.log('Loading criteria data...');
+      
       // Load criteria with weights
       const { data: criteriaData, error: criteriaError } = await supabase
         .from('criteria')
         .select('id, name, weight');
 
-      if (criteriaError) throw criteriaError;
+      if (criteriaError) {
+        console.error('Error loading criteria:', criteriaError);
+        throw criteriaError;
+      }
+
+      console.log('Criteria data:', criteriaData);
 
       // Check if criteria have weights
       const criteriaWithWeights = criteriaData?.filter(c => c.weight !== null && c.weight !== undefined && c.weight > 0);
@@ -141,12 +151,19 @@ const AHPCalculation = () => {
 
       setCriteria(criteriaData || []);
 
+      console.log('Loading students data...');
+      
       // Load students
       const { data: studentsData, error: studentsError } = await supabase
         .from('students')
         .select('id, name, class, nis');
 
-      if (studentsError) throw studentsError;
+      if (studentsError) {
+        console.error('Error loading students:', studentsError);
+        throw studentsError;
+      }
+      
+      console.log('Students data:', studentsData);
       
       if (!studentsData || studentsData.length === 0) {
         setError("Belum ada data siswa. Silahkan tambahkan data siswa terlebih dahulu.");
@@ -161,19 +178,28 @@ const AHPCalculation = () => {
 
       setStudents(studentsData);
 
+      console.log('Loading scores data...');
+      
       // Load scores
       const { data: scoresData, error: scoresError } = await supabase
         .from('student_scores')
         .select('student_id, criteria_id, score');
 
-      if (scoresError) throw scoresError;
+      if (scoresError) {
+        console.error('Error loading scores:', scoresError);
+        throw scoresError;
+      }
+      
+      console.log('Scores data:', scoresData);
       setScores(scoresData || []);
 
       // Check if we have enough scores to proceed
       const totalRequiredScores = studentsData.length * criteriaData.length;
       const availableScores = scoresData?.length || 0;
       
-      if (availableScores < totalRequiredScores * 0.8) { // Allow 80% completion
+      console.log(`Required scores: ${totalRequiredScores}, Available: ${availableScores}`);
+      
+      if (availableScores < totalRequiredScores * 0.5) { // Allow 50% completion
         setError(`Diperlukan lebih banyak data nilai siswa. Tersedia: ${availableScores}/${totalRequiredScores} nilai.`);
         toast({
           title: "Peringatan",
@@ -245,7 +271,11 @@ const AHPCalculation = () => {
           // Apply weight
           const weightedScore = normalizedScore * (criterion.weight || 0);
           ahpScore += weightedScore;
+          
+          console.log(`Student ${student.name}, Criteria ${criterion.name}: Raw=${rawScore}, Normalized=${normalizedScore}, Weighted=${weightedScore}`);
         });
+        
+        console.log(`Student ${student.name} final AHP score: ${ahpScore}`);
         
         return {
           student,
@@ -263,7 +293,7 @@ const AHPCalculation = () => {
         result.rank = index + 1;
       });
       
-      console.log('AHP Results calculated:', ahpResults);
+      console.log('Final AHP Results:', ahpResults);
       
       await new Promise(resolve => setTimeout(resolve, 500));
       setCalculationStep(3);
@@ -302,11 +332,13 @@ const AHPCalculation = () => {
 
   const saveResults = async (ahpResults: any[]) => {
     try {
-      // Delete existing results properly
+      console.log('Saving AHP results to database...');
+      
+      // Delete existing results
       const { error: deleteError } = await supabase
         .from('ahp_results')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // Use a UUID that doesn't exist
+        .neq('id', '00000000-0000-0000-0000-000000000000');
       
       if (deleteError) {
         console.log('Delete error (might be expected if no existing results):', deleteError);
@@ -318,6 +350,8 @@ const AHPCalculation = () => {
         final_score: result.ahpScore,
         rank: result.rank
       }));
+      
+      console.log('Inserting results:', resultsToInsert);
       
       const { error: insertError } = await supabase
         .from('ahp_results')
@@ -341,6 +375,8 @@ const AHPCalculation = () => {
 
   const resetCalculation = async () => {
     try {
+      console.log('Resetting calculation...');
+      
       const { error } = await supabase
         .from('ahp_results')
         .delete()
@@ -518,27 +554,29 @@ const AHPCalculation = () => {
                 </CardContent>
               </Card>
 
-              <Card className="bg-green-50 border-green-200">
-                <CardHeader>
-                  <CardTitle className="text-green-800">🎉 Top 3 Siswa Berprestasi</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {results.slice(0, 3).map((result, index) => (
-                      <div key={result.student_id} className="text-center p-4 bg-white rounded-lg border-2 border-green-300">
-                        <div className="text-3xl mb-2">
-                          {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+              {results.length >= 3 && (
+                <Card className="bg-green-50 border-green-200">
+                  <CardHeader>
+                    <CardTitle className="text-green-800">🎉 Top 3 Siswa Berprestasi</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {results.slice(0, 3).map((result, index) => (
+                        <div key={result.student_id} className="text-center p-4 bg-white rounded-lg border-2 border-green-300">
+                          <div className="text-3xl mb-2">
+                            {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                          </div>
+                          <div className="font-bold text-lg">{result.student.name}</div>
+                          <div className="text-gray-600">{result.student.nis}</div>
+                          <div className="text-green-600 font-bold text-xl mt-2">
+                            {(result.final_score * 100).toFixed(2)}%
+                          </div>
                         </div>
-                        <div className="font-bold text-lg">{result.student.name}</div>
-                        <div className="text-gray-600">{result.student.nis}</div>
-                        <div className="text-green-600 font-bold text-xl mt-2">
-                          {(result.final_score * 100).toFixed(2)}%
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
 
