@@ -1,11 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { apiClient } from '@/api/client';
 import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -57,14 +56,11 @@ const CriteriaManagement = () => {
 
   const fetchCriteria = async () => {
     try {
-      const { data, error } = await supabase
-        .from('criteria')
-        .select('*')
-        .order('name');
-
-      if (error) throw error;
-
-      setCriteria(data || []);
+      const response = await apiClient.getCriteria();
+      
+      if (response.success) {
+        setCriteria(response.data || []);
+      }
     } catch (error) {
       console.error('Error fetching criteria:', error);
       toast({
@@ -81,16 +77,12 @@ const CriteriaManagement = () => {
     if (criteria.length === 0) return;
 
     try {
-      const { data, error } = await supabase
-        .from('criteria_comparison')
-        .select('criteria1_id, criteria2_id, value');
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
+      const response = await apiClient.getCriteriaComparisons();
+      
+      if (response.success && response.data && response.data.length > 0) {
         const newMatrix = [...pairwiseMatrix];
         
-        data.forEach(comparison => {
+        response.data.forEach((comparison: any) => {
           const i = criteria.findIndex(c => c.id === comparison.criteria1_id);
           const j = criteria.findIndex(c => c.id === comparison.criteria2_id);
           
@@ -120,7 +112,6 @@ const CriteriaManagement = () => {
       newMatrix[j][i] = 1 / value;
       setPairwiseMatrix(newMatrix);
 
-      // Reset consistency status when matrix changes
       setConsistencyRatio(null);
       setIsConsistent(null);
 
@@ -128,30 +119,12 @@ const CriteriaManagement = () => {
       const criteria1Id = criteria[i].id;
       const criteria2Id = criteria[j].id;
 
-      // Check if comparison exists
-      const { data: existingData } = await supabase
-        .from('criteria_comparison')
-        .select('id')
-        .eq('criteria1_id', criteria1Id)
-        .eq('criteria2_id', criteria2Id);
+      await apiClient.saveCriteriaComparison({
+        criteria1_id: criteria1Id,
+        criteria2_id: criteria2Id,
+        value
+      });
 
-      if (existingData && existingData.length > 0) {
-        // Update existing comparison
-        await supabase
-          .from('criteria_comparison')
-          .update({ value })
-          .eq('criteria1_id', criteria1Id)
-          .eq('criteria2_id', criteria2Id);
-      } else {
-        // Insert new comparison
-        await supabase
-          .from('criteria_comparison')
-          .insert({
-            criteria1_id: criteria1Id,
-            criteria2_id: criteria2Id,
-            value
-          });
-      }
     } catch (error) {
       console.error('Error updating matrix:', error);
       toast({
@@ -165,6 +138,7 @@ const CriteriaManagement = () => {
   const calculateWeights = async () => {
     try {
       setSavingMatrix(true);
+      
       // Normalisasi matriks
       const normalizedMatrix = pairwiseMatrix.map((row, i) => {
         const columnSum = pairwiseMatrix.reduce((sum, r) => sum + r[i], 0);
@@ -199,20 +173,17 @@ const CriteriaManagement = () => {
       console.log('CI:', ci);
       console.log('CR:', cr);
 
-      // Save weights to database only if consistent or forced
+      // Save weights to database if consistent
       if (cr <= 0.1) {
         // Update weights in database
+        for (let i = 0; i < criteria.length; i++) {
+          await apiClient.updateCriteria(criteria[i].id, { weight: weights[i] });
+        }
+
         const updatedCriteria = criteria.map((criterion, index) => ({
           ...criterion,
           weight: weights[index]
         }));
-
-        for (const criterion of updatedCriteria) {
-          await supabase
-            .from('criteria')
-            .update({ weight: criterion.weight })
-            .eq('id', criterion.id);
-        }
 
         setCriteria(updatedCriteria);
 
@@ -254,23 +225,19 @@ const CriteriaManagement = () => {
         return row.map(value => value / columnSum);
       });
 
-      // Hitung eigen vector (rata-rata baris)
       const weights = normalizedMatrix.map(row => 
         row.reduce((sum, value) => sum + value, 0) / row.length
       );
       
       // Update weights in database despite inconsistency
+      for (let i = 0; i < criteria.length; i++) {
+        await apiClient.updateCriteria(criteria[i].id, { weight: weights[i] });
+      }
+
       const updatedCriteria = criteria.map((criterion, index) => ({
         ...criterion,
         weight: weights[index]
       }));
-
-      for (const criterion of updatedCriteria) {
-        await supabase
-          .from('criteria')
-          .update({ weight: criterion.weight })
-          .eq('id', criterion.id);
-      }
 
       setCriteria(updatedCriteria);
       
@@ -394,12 +361,6 @@ const CriteriaManagement = () => {
                 ) : (
                   <div className="mt-2">
                     <p>CR melebihi 10% (0.1). Sebaiknya perbaiki perbandingan berpasangan agar lebih konsisten.</p>
-                    <p className="text-sm mt-1">
-                      <strong>Panduan CR:</strong><br/>
-                      • 0-5%: Sangat konsisten<br/>
-                      • 5-10%: Konsisten (dapat diterima)<br/>
-                      • &gt;10%: Tidak konsisten (perlu diperbaiki)
-                    </p>
                     <Button 
                       variant="outline" 
                       className="mt-3" 
@@ -434,9 +395,6 @@ const CriteriaManagement = () => {
               <div>• 9 = Mutlak lebih penting</div>
               <div>• 2,4,6,8 = Nilai antara</div>
             </div>
-            <p className="text-xs text-blue-600 mt-2">
-              <strong>Tips:</strong> Mulai dengan perbandingan yang jelas, lalu sesuaikan secara bertahap untuk mencapai CR &lt; 10%
-            </p>
           </div>
         </CardContent>
       </Card>

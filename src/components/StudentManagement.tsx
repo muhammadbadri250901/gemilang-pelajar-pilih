@@ -8,82 +8,78 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { apiClient } from '@/api/client';
 
 interface Student {
   id: string;
   name: string;
   nis: string;
   class: string;
-  academicScore?: number;
-  behaviorScore?: number;
-  achievementScore?: number;
-  leadershipScore?: number;
-  attendanceScore?: number;
+  scores?: {[criteriaName: string]: number};
 }
 
-interface Score {
-  criteria_id: string;
-  score: number;
+interface Criteria {
+  id: string;
+  name: string;
 }
 
 const StudentManagement = () => {
   const [students, setStudents] = useState<Student[]>([]);
-  const [criteria, setCriteria] = useState<{id: string, name: string}[]>([]);
+  const [criteria, setCriteria] = useState<Criteria[]>([]);
   const [loading, setLoading] = useState(true);
-  const [studentScores, setStudentScores] = useState<{[key: string]: {[criteriaId: string]: number}}>({});
 
   const [formData, setFormData] = useState({
     name: '',
     nis: '',
     class: '',
-    academicScore: '',
-    behaviorScore: '',
-    achievementScore: '',
-    leadershipScore: '',
-    attendanceScore: ''
+    scores: {} as {[key: string]: string}
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   useEffect(() => {
-    fetchStudents();
-    fetchCriteria();
+    fetchData();
   }, []);
 
-  const fetchStudents = async () => {
+  const fetchData = async () => {
     try {
-      const { data: studentsData, error: studentsError } = await supabase
-        .from('students')
-        .select('*');
+      setLoading(true);
+      
+      // Fetch students and criteria in parallel
+      const [studentsResponse, criteriaResponse, scoresResponse] = await Promise.all([
+        apiClient.getStudents(),
+        apiClient.getCriteria(),
+        apiClient.getStudentScores()
+      ]);
 
-      if (studentsError) {
-        throw studentsError;
+      if (studentsResponse.success) {
+        const studentsData = studentsResponse.data || [];
+        const criteriaData = criteriaResponse.data || [];
+        const scoresData = scoresResponse.data || [];
+
+        // Map scores to students
+        const studentsWithScores = studentsData.map((student: Student) => {
+          const studentScores: {[criteriaName: string]: number} = {};
+          
+          criteriaData.forEach((criterion: Criteria) => {
+            const score = scoresData.find((s: any) => 
+              s.student_id === student.id && s.criteria_id === criterion.id
+            );
+            studentScores[criterion.name] = score ? score.score : 0;
+          });
+
+          return {
+            ...student,
+            scores: studentScores
+          };
+        });
+
+        setStudents(studentsWithScores);
+        setCriteria(criteriaData);
       }
-
-      // Get all scores
-      const { data: scoresData, error: scoresError } = await supabase
-        .from('student_scores')
-        .select('student_id, criteria_id, score');
-
-      if (scoresError) {
-        throw scoresError;
-      }
-
-      // Organize scores by student_id and criteria_id
-      const scoresByStudent: {[key: string]: {[criteriaId: string]: number}} = {};
-      scoresData?.forEach(score => {
-        if (!scoresByStudent[score.student_id]) {
-          scoresByStudent[score.student_id] = {};
-        }
-        scoresByStudent[score.student_id][score.criteria_id] = score.score;
-      });
-
-      setStudentScores(scoresByStudent);
-      setStudents(studentsData || []);
-    } catch (error) {
-      console.error('Error fetching students:', error);
+    } catch (error: any) {
+      console.error('Error fetching data:', error);
       toast({
         title: "Error",
         description: "Gagal memuat data siswa",
@@ -91,23 +87,6 @@ const StudentManagement = () => {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchCriteria = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('criteria')
-        .select('id, name')
-        .order('name');
-
-      if (error) {
-        throw error;
-      }
-
-      setCriteria(data || []);
-    } catch (error) {
-      console.error('Error fetching criteria:', error);
     }
   };
 
@@ -121,68 +100,35 @@ const StudentManagement = () => {
         class: formData.class
       };
 
-      let studentId = editingId;
-      
+      let response;
       if (editingId) {
-        // Update existing student
-        const { error } = await supabase
-          .from('students')
-          .update(studentData)
-          .eq('id', editingId);
-
-        if (error) throw error;
+        response = await apiClient.updateStudent(editingId, studentData);
       } else {
-        // Insert new student
-        const { data, error } = await supabase
-          .from('students')
-          .insert(studentData)
-          .select();
-
-        if (error) throw error;
-        studentId = data[0].id;
+        response = await apiClient.createStudent(studentData);
       }
 
-      // Map criteria names to their IDs
-      const criteriaMap: {[key: string]: string} = {
-        'Akademik': criteria.find(c => c.name === 'Akademik')?.id || '',
-        'Perilaku': criteria.find(c => c.name === 'Perilaku')?.id || '',
-        'Prestasi': criteria.find(c => c.name === 'Prestasi')?.id || '',
-        'Kepemimpinan': criteria.find(c => c.name === 'Kepemimpinan')?.id || '',
-        'Kehadiran': criteria.find(c => c.name === 'Kehadiran')?.id || ''
-      };
+      if (response.success) {
+        // Save scores
+        const studentId = editingId || response.data?.id;
+        if (studentId) {
+          const scores = criteria.map(criterion => ({
+            student_id: studentId,
+            criteria_id: criterion.id,
+            score: Number(formData.scores[criterion.name]) || 0
+          }));
 
-      // Update or insert scores
-      if (studentId) {
-        const scores = [
-          { student_id: studentId, criteria_id: criteriaMap['Akademik'], score: Number(formData.academicScore) },
-          { student_id: studentId, criteria_id: criteriaMap['Perilaku'], score: Number(formData.behaviorScore) },
-          { student_id: studentId, criteria_id: criteriaMap['Prestasi'], score: Number(formData.achievementScore) },
-          { student_id: studentId, criteria_id: criteriaMap['Kepemimpinan'], score: Number(formData.leadershipScore) },
-          { student_id: studentId, criteria_id: criteriaMap['Kehadiran'], score: Number(formData.attendanceScore) }
-        ];
+          await apiClient.saveStudentScores(scores);
+        }
 
-        // First delete existing scores
-        await supabase
-          .from('student_scores')
-          .delete()
-          .eq('student_id', studentId);
+        toast({
+          title: editingId ? "Data Diperbarui" : "Data Ditambahkan",
+          description: editingId ? "Data siswa berhasil diperbarui" : "Data siswa baru berhasil ditambahkan",
+        });
 
-        // Then insert new scores
-        const { error: scoreError } = await supabase
-          .from('student_scores')
-          .insert(scores.filter(s => s.criteria_id && !isNaN(s.score)));
-
-        if (scoreError) throw scoreError;
+        fetchData();
+        resetForm();
+        setIsDialogOpen(false);
       }
-
-      toast({
-        title: editingId ? "Data Diperbarui" : "Data Ditambahkan",
-        description: editingId ? "Data siswa berhasil diperbarui" : "Data siswa baru berhasil ditambahkan",
-      });
-
-      fetchStudents();
-      resetForm();
-      setIsDialogOpen(false);
     } catch (error: any) {
       console.error('Error saving student:', error);
       toast({
@@ -198,37 +144,24 @@ const StudentManagement = () => {
       name: '',
       nis: '',
       class: '',
-      academicScore: '',
-      behaviorScore: '',
-      achievementScore: '',
-      leadershipScore: '',
-      attendanceScore: ''
+      scores: {}
     });
     setEditingId(null);
   };
 
-  const handleEdit = async (student: Student) => {
+  const handleEdit = (student: Student) => {
     setEditingId(student.id);
     
-    // Get scores for this student
-    const scores = studentScores[student.id] || {};
-    
-    // Find criteria IDs
-    const academicId = criteria.find(c => c.name === 'Akademik')?.id;
-    const behaviorId = criteria.find(c => c.name === 'Perilaku')?.id;
-    const achievementId = criteria.find(c => c.name === 'Prestasi')?.id;
-    const leadershipId = criteria.find(c => c.name === 'Kepemimpinan')?.id;
-    const attendanceId = criteria.find(c => c.name === 'Kehadiran')?.id;
+    const scores: {[key: string]: string} = {};
+    criteria.forEach(criterion => {
+      scores[criterion.name] = student.scores?.[criterion.name]?.toString() || '';
+    });
 
     setFormData({
       name: student.name,
       nis: student.nis,
       class: student.class,
-      academicScore: academicId && scores[academicId] ? scores[academicId].toString() : '',
-      behaviorScore: behaviorId && scores[behaviorId] ? scores[behaviorId].toString() : '',
-      achievementScore: achievementId && scores[achievementId] ? scores[achievementId].toString() : '',
-      leadershipScore: leadershipId && scores[leadershipId] ? scores[leadershipId].toString() : '',
-      attendanceScore: attendanceId && scores[attendanceId] ? scores[attendanceId].toString() : ''
+      scores
     });
     
     setIsDialogOpen(true);
@@ -236,19 +169,15 @@ const StudentManagement = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      // Delete student (cascade will delete related scores)
-      const { error } = await supabase
-        .from('students')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setStudents(students.filter(s => s.id !== id));
-      toast({
-        title: "Data Dihapus",
-        description: "Data siswa berhasil dihapus",
-      });
+      const response = await apiClient.deleteStudent(id);
+      
+      if (response.success) {
+        setStudents(students.filter(s => s.id !== id));
+        toast({
+          title: "Data Dihapus",
+          description: "Data siswa berhasil dihapus",
+        });
+      }
     } catch (error: any) {
       console.error('Error deleting student:', error);
       toast({
@@ -257,14 +186,6 @@ const StudentManagement = () => {
         variant: "destructive",
       });
     }
-  };
-
-  const getStudentScore = (studentId: string, criteriaName: string) => {
-    const criteriaId = criteria.find(c => c.name === criteriaName)?.id;
-    if (criteriaId && studentScores[studentId] && studentScores[studentId][criteriaId]) {
-      return studentScores[studentId][criteriaId];
-    }
-    return '-';
   };
 
   if (loading) {
@@ -321,68 +242,32 @@ const StudentManagement = () => {
                     required
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="academic">Nilai Akademik</Label>
-                    <Input
-                      id="academic"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={formData.academicScore}
-                      onChange={(e) => setFormData({...formData, academicScore: e.target.value})}
-                      required
-                    />
+                
+                {criteria.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Nilai Kriteria</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {criteria.map((criterion) => (
+                        <div key={criterion.id}>
+                          <Label htmlFor={criterion.name} className="text-sm">{criterion.name}</Label>
+                          <Input
+                            id={criterion.name}
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={formData.scores[criterion.name] || ''}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              scores: { ...formData.scores, [criterion.name]: e.target.value }
+                            })}
+                            required
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor="behavior">Nilai Perilaku</Label>
-                    <Input
-                      id="behavior"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={formData.behaviorScore}
-                      onChange={(e) => setFormData({...formData, behaviorScore: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="achievement">Nilai Prestasi</Label>
-                    <Input
-                      id="achievement"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={formData.achievementScore}
-                      onChange={(e) => setFormData({...formData, achievementScore: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="leadership">Nilai Kepemimpinan</Label>
-                    <Input
-                      id="leadership"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={formData.leadershipScore}
-                      onChange={(e) => setFormData({...formData, leadershipScore: e.target.value})}
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="attendance">Nilai Kehadiran</Label>
-                  <Input
-                    id="attendance"
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={formData.attendanceScore}
-                    onChange={(e) => setFormData({...formData, attendanceScore: e.target.value})}
-                    required
-                  />
-                </div>
+                )}
+                
                 <Button type="submit" className="w-full">
                   {editingId ? 'Update' : 'Simpan'}
                 </Button>
@@ -398,18 +283,16 @@ const StudentManagement = () => {
                   <TableHead>Nama</TableHead>
                   <TableHead>NIS</TableHead>
                   <TableHead>Kelas</TableHead>
-                  <TableHead>Akademik</TableHead>
-                  <TableHead>Perilaku</TableHead>
-                  <TableHead>Prestasi</TableHead>
-                  <TableHead>Kepemimpinan</TableHead>
-                  <TableHead>Kehadiran</TableHead>
+                  {criteria.map(criterion => (
+                    <TableHead key={criterion.id}>{criterion.name}</TableHead>
+                  ))}
                   <TableHead>Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {students.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-6 text-gray-500">
+                    <TableCell colSpan={4 + criteria.length} className="text-center py-6 text-gray-500">
                       Belum ada data siswa. Klik "Tambah Siswa" untuk menambahkan data.
                     </TableCell>
                   </TableRow>
@@ -419,11 +302,11 @@ const StudentManagement = () => {
                       <TableCell className="font-medium">{student.name}</TableCell>
                       <TableCell>{student.nis}</TableCell>
                       <TableCell>{student.class}</TableCell>
-                      <TableCell>{getStudentScore(student.id, 'Akademik')}</TableCell>
-                      <TableCell>{getStudentScore(student.id, 'Perilaku')}</TableCell>
-                      <TableCell>{getStudentScore(student.id, 'Prestasi')}</TableCell>
-                      <TableCell>{getStudentScore(student.id, 'Kepemimpinan')}</TableCell>
-                      <TableCell>{getStudentScore(student.id, 'Kehadiran')}</TableCell>
+                      {criteria.map(criterion => (
+                        <TableCell key={criterion.id}>
+                          {student.scores?.[criterion.name] || '-'}
+                        </TableCell>
+                      ))}
                       <TableCell>
                         <div className="flex space-x-2">
                           <Button
