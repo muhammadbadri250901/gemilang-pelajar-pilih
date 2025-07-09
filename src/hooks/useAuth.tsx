@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token) {
       try {
         // Verify token with backend
-        const response = await apiClient.request('/auth/verify', {
+        const response = await apiClient.request<User>('/auth/verify', {
           method: 'POST',
         });
         

@@ -17,7 +17,7 @@ class ApiClient {
     this.token = localStorage.getItem('auth_token');
   }
 
-  private async request<T>(
+  async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
