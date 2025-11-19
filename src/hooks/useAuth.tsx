@@ -1,6 +1,6 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { apiClient } from '@/api/client';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 
 interface User {
@@ -28,58 +28,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const checkAuthStatus = async () => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      try {
-        // Verify token with backend
-        const response = await apiClient.request<User>('/auth/verify', {
-          method: 'POST',
-        });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        // Fetch user role
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', session.user.id)
+          .maybeSingle();
         
-        if (response.success && response.data) {
-          setUser(response.data);
-        } else {
-          apiClient.clearToken();
-        }
-      } catch (error) {
-        console.error('Auth verification failed:', error);
-        apiClient.clearToken();
+        setUser({
+          id: session.user.id,
+          email: session.user.email || '',
+          username: session.user.email?.split('@')[0] || 'User',
+          role: roleData?.role || 'user'
+        });
       }
+    } catch (error) {
+      console.error('Auth verification failed:', error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const response = await apiClient.login(email, password);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
       
-      if (response.success && response.data) {
-        setUser(response.data.user);
+      if (error) throw error;
+      
+      if (data.session?.user) {
+        // Fetch user role
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', data.session.user.id)
+          .maybeSingle();
+        
+        setUser({
+          id: data.session.user.id,
+          email: data.session.user.email || '',
+          username: data.session.user.email?.split('@')[0] || 'User',
+          role: roleData?.role || 'user'
+        });
+        
         toast({
           title: "Login Berhasil",
           description: "Selamat datang kembali!",
         });
         return true;
-      } else {
-        toast({
-          title: "Login Gagal",
-          description: response.message || "Email atau password salah",
-          variant: "destructive",
-        });
-        return false;
       }
+      return false;
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Terjadi kesalahan saat login",
+        title: "Login Gagal",
+        description: error.message || "Email atau password salah",
         variant: "destructive",
       });
       return false;
     }
   };
 
-  const logout = () => {
-    apiClient.logout();
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     toast({
       title: "Logout Berhasil",
